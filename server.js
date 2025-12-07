@@ -395,11 +395,6 @@ io.on("connection", (socket) => {
             delete lastMessageTimes[socket.id];
             delete lastActivityTimes[socket.id];
 
-            io.to(ROOM_NAME).emit("system-message", {
-                time: getTimeString(),
-                text: `「${leftName}」さんが退室しました。`
-            });
-
             broadcastUserList();
             broadcastTypingUsers();
 
