@@ -1,6 +1,5 @@
 node_modules/
 npm-debug.log
 .env
-
-git add .
-git commit -m "Initial chat app version"
+.DS_Store
+*.log

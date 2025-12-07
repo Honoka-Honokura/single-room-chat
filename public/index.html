@@ -3,153 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <title>1部屋だけの10人チャット</title>
-    <style>
-        body {
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            margin: 0;
-            display: flex;
-            height: 100vh;
-        }
-        /* 左：チャットエリア / 右：ユーザー一覧 */
-        .chat-wrapper {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            border-right: 1px solid #ddd;
-        }
-        .sidebar {
-            width: 220px;
-            padding: 8px;
-            box-sizing: border-box;
-        }
-        .sidebar h3 {
-            margin-top: 0;
-            font-size: 14px;
-        }
-        #userList {
-            font-size: 13px;
-            line-height: 1.6;
-        }
-
-        header {
-            padding: 8px 12px;
-            border-bottom: 1px solid #ddd;
-            font-size: 14px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        #roomTitle {
-            font-weight: bold;
-        }
-
-        #chatLog {
-            flex: 1;
-            padding: 8px 12px;
-            overflow-y: auto;
-            font-size: 14px;
-            background: #fafafa;
-        }
-
-        .system-message {
-            color: #777;
-            font-size: 12px;
-            margin: 4px 0;
-        }
-        .message {
-            margin: 4px 0;
-            padding: 4px 6px;
-            border-radius: 4px;
-            display: inline-block;
-            max-width: 80%;
-            word-break: break-word;
-        }
-        .message-meta {
-            font-size: 11px;
-            color: #666;
-            margin-bottom: 2px;
-        }
-        .message-self {
-            background: #e0f3ff;
-            align-self: flex-end;
-        }
-        .message-other {
-            background: #ffffff;
-        }
-        .message-row {
-            display: flex;
-            flex-direction: column;
-        }
-        .message-row.self {
-            align-items: flex-end;
-        }
-
-        .footer {
-            border-top: 1px solid #ddd;
-            padding: 8px 12px;
-            box-sizing: border-box;
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-        .name-row {
-            display: flex;
-            gap: 4px;
-            margin-bottom: 4px;
-        }
-        input[type="text"] {
-            padding: 4px 6px;
-            font-size: 13px;
-        }
-        #nameInput {
-            flex: 1;
-        }
-        #joinBtn, #renameBtn, #sendBtn {
-            font-size: 13px;
-            padding: 4px 8px;
-            cursor: pointer;
-        }
-        .input-row {
-            display: flex;
-            gap: 4px;
-        }
-        #msgInput {
-            flex: 1;
-        }
-        #typingInfo {
-            font-size: 11px;
-            color: #888;
-            min-height: 14px;
-        }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 別ファイルに分けたCSS -->
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="chat-wrapper">
         <header>
             <div id="roomTitle">1部屋だけの10人チャット</div>
-            <div id="statusText" style="font-size:12px; color:#555;">未入室</div>
+            <div id="statusText">未入室</div>
         </header>
 
-        <div id="chatInfoBeforeJoin"
-             style="padding:8px 12px; font-size:13px; color:#666; border-bottom:1px solid #ddd;">
-             ※ 入室すると、この下にチャットが表示されます。
+        <div id="chatInfoBeforeJoin">
+            ※ 入室すると、この下にチャットが表示されます。
         </div>
 
-<div id="chatLog" style="display:none;"></div>
-
+        <div id="chatLog"></div>
 
         <div class="footer">
-           <div class="name-row">
-    <input id="nameInput" type="text" placeholder="名前を入力" />
-    <button id="joinBtn">入室</button>
-    <button id="renameBtn" disabled>名前変更</button>
-    <button id="leaveBtn" disabled>退室</button>
-</div>
+            <!-- 入室前に使う名前＋入室ボタン -->
+            <div class="name-row" id="joinRow">
+                <input id="nameInput" type="text" placeholder="名前を入力" />
+                <button id="joinBtn">入室</button>
+            </div>
 
+            <!-- ★ 吹き出しの色を選ぶ行 -->
+            <div class="color-row">
+                <span class="color-label">吹き出し色：</span>
+
+                <label>
+                    <input type="radio" name="bubbleColor" value="#FFEBEE" checked>
+                    <span class="color-swatch color-pink"></span>
+                </label>
+                <label>
+                    <input type="radio" name="bubbleColor" value="#E3F2FD">
+                    <span class="color-swatch color-blue"></span>
+                </label>
+                <label>
+                    <input type="radio" name="bubbleColor" value="#E8F5E9">
+                    <span class="color-swatch color-green"></span>
+                </label>
+                <label>
+                    <input type="radio" name="bubbleColor" value="#FFF3E0">
+                    <span class="color-swatch color-orange"></span>
+                </label>
+            </div>
+
+            <!-- メッセージ入力（入室後の主役） -->
             <div class="input-row">
                 <input id="msgInput" type="text" placeholder="メッセージを入力" disabled />
                 <button id="sendBtn" disabled>送信</button>
             </div>
+
+            <!-- ★ 定型文ボタン（入室後に使う） -->
+            <div class="template-row">
+                <button class="template-btn" data-text="逝きそうです♡" disabled>逝きそうです♡</button>
+                <button class="template-btn" data-text="逝きました♡" disabled>逝きました♡</button>
+            </div>
+
+            <!-- 入室後だけ見える小さなコントロール -->
+            <div class="after-join-controls">
+                <button id="renameBtn" disabled>名前変更</button>
+                <button id="leaveBtn" disabled>退室</button>
+            </div>
+
+
             <div id="typingInfo"></div>
         </div>
     </div>
@@ -161,102 +79,103 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-
-     // 名前から「ユーザーごとの色」を決める仕組み
-    function hashStringToNumber(str) {
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-            hash = ((hash << 5) - hash) + str.charCodeAt(i);
-            hash |= 0; // 32bit に収める
+        /* ユーザーごとの色決定 ------------------ */
+        function hashStringToNumber(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = ((hash << 5) - hash) + str.charCodeAt(i);
+                hash |= 0;
+            }
+            return Math.abs(hash);
         }
-        return Math.abs(hash);
-    }
 
-    function getColorForName(name) {
-        // パステル系の色パレット（好きに変えてOK）
-        const colors = [
-            "#FFEBEE", // ピンク系
-            "#FFF3E0", // オレンジ系
-            "#FFFDE7", // イエロー系
-            "#E8F5E9", // グリーン系
-            "#E3F2FD", // ブルー系
-            "#F3E5F5", // パープル系
-            "#E0F7FA", // シアン系
-            "#FBE9E7"  // サーモン系
-        ];
-        if (!name) return "#FFFFFF";
-        const num = hashStringToNumber(name);
-        const index = num % colors.length;
-        return colors[index];
-    }
+        function getColorForName(name) {
+            const colors = [
+                "#FFEBEE", "#FFF3E0", "#FFFDE7", "#E8F5E9",
+                "#E3F2FD", "#F3E5F5", "#E0F7FA", "#FBE9E7"
+            ];
+            if (!name) return "#FFFFFF";
+            const num = hashStringToNumber(name);
+            const index = num % colors.length;
+            return colors[index];
+        }
+
+        function darkenColor(hex, amount = 0.35) {
+            const num = parseInt(hex.replace("#", ""), 16);
+            let r = (num >> 16) & 255;
+            let g = (num >> 8) & 255;
+            let b = num & 255;
+
+            r = Math.floor(r * (1 - amount));
+            g = Math.floor(g * (1 - amount));
+            b = Math.floor(b * (1 - amount));
+
+            return "#" + ((1 << 24) + (r << 16) + (g << 8) + b)
+                .toString(16)
+                .slice(1);
+        }
+
+        /* 要素取得 ------------------------------ */
+        const socket            = io();
+        const nameInput         = document.getElementById("nameInput");
+        const joinBtn           = document.getElementById("joinBtn");
+        const renameBtn         = document.getElementById("renameBtn");
+        const leaveBtn          = document.getElementById("leaveBtn");
+        const msgInput          = document.getElementById("msgInput");
+        const sendBtn           = document.getElementById("sendBtn");
+        const chatLog           = document.getElementById("chatLog");
+        const userListDiv       = document.getElementById("userList");
+        const typingInfo        = document.getElementById("typingInfo");
+        const statusText        = document.getElementById("statusText");
+        const joinRow           = document.getElementById("joinRow");
+        const afterJoinControls = document.querySelector(".after-join-controls");
+        const inputRow          = document.querySelector(".input-row");
+        const infoBeforeJoin    = document.getElementById("chatInfoBeforeJoin");
+        const templateButtons   = document.querySelectorAll(".template-btn");
 
 
-// 明度を下げて濃い色を作る（0.0〜1.0で調整）
-function darkenColor(hex, amount = 0.35) {
-    // hex → RGB に変換
-    const num = parseInt(hex.replace("#", ""), 16);
-    let r = (num >> 16) & 255;
-    let g = (num >> 8) & 255;
-    let b = num & 255;
-
-    // amount のぶんだけ暗くする
-    r = Math.floor(r * (1 - amount));
-    g = Math.floor(g * (1 - amount));
-    b = Math.floor(b * (1 - amount));
-
-    // RGB → hex に戻す
-    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b)
-        .toString(16)
-        .slice(1);
-}
-
-
-
-        const socket = io();
-
-        const nameInput = document.getElementById("nameInput");
-        const joinBtn = document.getElementById("joinBtn");
-        const renameBtn = document.getElementById("renameBtn");
-        const leaveBtn = document.getElementById("leaveBtn");
-        const msgInput = document.getElementById("msgInput");
-        const sendBtn = document.getElementById("sendBtn");
-        const chatLog = document.getElementById("chatLog");
-        const userListDiv = document.getElementById("userList");
-        const typingInfo = document.getElementById("typingInfo");
-        const statusText = document.getElementById("statusText");
-
-        let joined = false;
-        let mySocketId = null;
+        /* 状態 ---------------------------------- */
+        let joined        = false;
+        let mySocketId    = null;
         let typingTimeout = null;
-        let isTyping = false;
+        let isTyping      = false;
 
-        // 自分の socket.id を取得
+        /* ユーティリティ ------------------------ */
+        function trimChatLog() {
+            const max = 50;
+            while (chatLog.children.length > max) {
+                chatLog.removeChild(chatLog.lastElementChild);
+            }
+        }
+
+        function setTyping(flag) {
+            if (isTyping === flag) return;
+            isTyping = flag;
+            socket.emit("typing", isTyping);
+        }
+
+        /* Socket.io イベント -------------------- */
         socket.on("connect", () => {
             mySocketId = socket.id;
         });
 
-        // ルーム満員
         socket.on("room-full", () => {
             alert("この部屋は満員です（10人まで）");
         });
 
-        // システムメッセージ
         socket.on("system-message", ({ time, text }) => {
             const div = document.createElement("div");
             div.className = "system-message";
             div.textContent = `[${time}] ${text}`;
-
-            // ★ 一番上に追加する（最新メッセージが上）
             chatLog.prepend(div);
-            chatLog.scrollTop = 0; // 上にスクロール
+            trimChatLog();
+            chatLog.scrollTop = 0;
         });
 
-        // 過去のチャットログ（入室時に一括で送られてくる）
+        // 入室時に送られてくる過去ログ
         socket.on("chat-log", (logs) => {
-            // logs は { time, name, text } の配列
-            logs.forEach(({ time, name, text }) => {
+            logs.forEach(({ time, name, text, color }) => {
                 const row = document.createElement("div");
-                // ログは「過去の履歴」なので、全部 other 側として表示しておく
                 row.className = "message-row other";
 
                 const meta = document.createElement("div");
@@ -267,70 +186,68 @@ function darkenColor(hex, amount = 0.35) {
                 msgDiv.className = "message message-other";
                 msgDiv.textContent = text;
 
-                // カラーリング（今使っているのと同じ関数を使う）
-                const userColor = getColorForName(name);
-                const darkColor = darkenColor(userColor, 0.35);
-
+                // ★ color が来ていればそれを使い、無ければ従来どおり name から決める
+                const userColor = color || getColorForName(name);
+                msgDiv.style.setProperty("--bubble-color", userColor);
                 msgDiv.style.backgroundColor = userColor;
-                meta.style.color = darkColor;
+                meta.style.color = darkenColor(userColor, 0.35);
 
                 row.appendChild(meta);
                 row.appendChild(msgDiv);
 
-                // ★ 過去ログも「新しいほど上」に並ぶようにする
                 chatLog.prepend(row);
             });
 
-            // 一番上を表示
+            trimChatLog();
             chatLog.scrollTop = 0;
         });
 
 
         // 通常メッセージ
-socket.on("chat-message", ({ time, name, text, fromId }) => {
-    const row = document.createElement("div");
-    const isSelf = (fromId === mySocketId);
-    row.className = "message-row " + (isSelf ? "self" : "other");
+        socket.on("chat-message", ({ time, name, text, fromId, color }) => {
+            const row = document.createElement("div");
+            const isSelf = (fromId === mySocketId);
+            row.className = "message-row " + (isSelf ? "self" : "other");
 
-    const meta = document.createElement("div");
-    meta.className = "message-meta";
-    meta.textContent = `[${time}] ${name}`;
+            const meta = document.createElement("div");
+            meta.className = "message-meta";
+            meta.textContent = `[${time}] ${name}`;
 
-    const msgDiv = document.createElement("div");
-    msgDiv.className = "message " + (isSelf ? "message-self" : "message-other");
-    msgDiv.textContent = text;
+            const msgDiv = document.createElement("div");
+            msgDiv.className = "message " + (isSelf ? "message-self" : "message-other");
+            msgDiv.textContent = text;
 
-    const userColor = getColorForName(name);
+            // ★ ここも color を優先
+            const userColor = color || getColorForName(name);
 
-    // バブル（背景）はそのままパステル色
-    msgDiv.style.backgroundColor = userColor;
+            msgDiv.style.backgroundColor = userColor;
+            msgDiv.style.setProperty("--bubble-color", userColor);
+            meta.style.color = darkenColor(userColor, 0.35);
 
-    // ★ 名前は濃いバージョンの色にする
-    const darkColor = darkenColor(userColor, 0.35); 
-    meta.style.color = darkColor;
+            row.appendChild(meta);
+            row.appendChild(msgDiv);
 
-    row.appendChild(meta);
-    row.appendChild(msgDiv);
-
-    // ★ 最新メッセージを「上」に積み上げる
-    chatLog.prepend(row);
-    chatLog.scrollTop = 0; // 上までスクロール
-});
+            chatLog.prepend(row);
+            trimChatLog();
+            chatLog.scrollTop = 0;
+        });
 
 
-
-
-        // オンラインユーザー一覧
+        // オンラインユーザー
         socket.on("user-list", (names) => {
             if (names.length === 0) {
                 userListDiv.textContent = "誰もいません";
-                statusText.textContent = "未入室";
+                statusText.textContent = joined ? "オンライン: 0 / 10" : "未入室";
                 return;
             }
-            userListDiv.innerHTML = names
-                .map(n => `・${n}`)
-                .join("<br>");
-            statusText.textContent = `オンライン: ${names.length} / 10`;
+
+            userListDiv.innerHTML = names.map(n => `・${n}`).join("<br>");
+
+            if (joined) {
+                statusText.textContent = `オンライン: ${names.length} / 10`;
+            } else {
+                statusText.textContent = `未入室（オンライン: ${names.length} / 10）`;
+            }
         });
 
         // 入力中ユーザー一覧
@@ -339,91 +256,110 @@ socket.on("chat-message", ({ time, name, text, fromId }) => {
                 typingInfo.textContent = "";
                 return;
             }
-            const text = names.length === 1
+            const text = (names.length === 1)
                 ? `${names[0]}さんが入力中…`
                 : `${names.join("さん、")}さんが入力中…`;
             typingInfo.textContent = text;
         });
 
-// 入室ボタン
-joinBtn.addEventListener("click", () => {
-    if (joined) return;
+        /* 入室・退室・名前変更 ------------------ */
+        joinBtn.addEventListener("click", () => {
+            if (joined) return;
 
-    const name = nameInput.value.trim() || "";
-    socket.emit("join", name);
+            const name = nameInput.value.trim() || "";
 
-    joined = true;
-    joinBtn.disabled = true;
-    renameBtn.disabled = false;
-    leaveBtn.disabled = false; 
-    msgInput.disabled = false;
-    sendBtn.disabled = false;
+            // ★ 選択されている吹き出し色を取得
+            const selectedColorInput = document.querySelector('input[name="bubbleColor"]:checked');
+            const color = selectedColorInput ? selectedColorInput.value : null;
 
-    // ★ ここでチャット欄を表示・注意文を非表示にする
-    const info = document.getElementById("chatInfoBeforeJoin");
-    const log = document.getElementById("chatLog");
-    if (info) info.style.display = "none";
-    if (log) log.style.display = "block";
+            // ★ name と color をまとめて送る
+            socket.emit("join", { name, color });
 
-    if (!name) {
-        nameInput.placeholder = "名前はあとから変更できます";
-    }
-});
+            joined = true;
+
+            // メッセージ入力ボックスを表示
+            inputRow.style.display = "flex";
+
+            // 見た目の状態切り替え
+            document.body.classList.add("joined");
+            joinRow.style.display = "none";
+            joinBtn.disabled = true;
+            joinBtn.style.display = "none";
+
+            renameBtn.disabled = false;
+            leaveBtn.disabled  = false;
+            afterJoinControls.style.display = "flex";
+
+            msgInput.disabled = false;
+            sendBtn.disabled  = false;
+
+            // ★ 定型文ボタンを入室後に有効化して表示
+            document.querySelector(".template-row").style.display = "flex";
+            document.querySelectorAll(".template-btn").forEach(btn => btn.disabled = false);
 
 
-        // Enterで入室
+            if (infoBeforeJoin) infoBeforeJoin.style.display = "none";
+            chatLog.style.display = "block";
+
+            if (!name) {
+                nameInput.placeholder = "名前はあとから変更できます";
+            }
+
+        });
+
         nameInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
                 joinBtn.click();
             }
         });
 
-        // 名前変更
         renameBtn.addEventListener("click", () => {
-            const newName = nameInput.value.trim();
-            if (!newName) {
-                alert("新しい名前を入力してください");
-                return;
-            }
-            socket.emit("change-name", newName);
+            const current = nameInput.value.trim() || "";
+            const newName = prompt("新しい名前を入力してください", current);
+            if (!newName) return;
+            const trimmed = newName.trim();
+            if (!trimmed || trimmed === current) return;
+
+            socket.emit("change-name", trimmed);
+            nameInput.value = trimmed;
         });
 
+        leaveBtn.addEventListener("click", () => {
+            if (!joined) return;
 
-    
-        // 退室ボタン
-leaveBtn.addEventListener("click", () => {
-    if (!joined) return;
+            socket.emit("leave");
 
-    // サーバーに「退室したよ」と伝える
-    socket.emit("leave");
+            // メッセージ入力欄を非表示
+            inputRow.style.display = "none";
 
-    // ローカル状態をリセット
-    joined = false;
-    joinBtn.disabled = false;
-    renameBtn.disabled = true;
-    leaveBtn.disabled = true;
-    msgInput.disabled = true;
-    sendBtn.disabled = true;
+            joined = false;
+            document.body.classList.remove("joined");
 
-    // チャットを隠して「入室前の案内」に戻す
-    const info = document.getElementById("chatInfoBeforeJoin");
-    const log = document.getElementById("chatLog");
-    if (info) info.style.display = "block";
-    if (log) log.style.display = "none";
+            joinRow.style.display = "flex";
+            joinBtn.disabled = false;
+            joinBtn.style.display = "inline-block";
 
-    // 自分の画面上のチャットログも一旦消しておく
-    chatLog.innerHTML = "";
+            renameBtn.disabled = true;
+            leaveBtn.disabled  = true;
+            afterJoinControls.style.display = "none";
 
-    // オンライン表示も自分視点では未入室に戻す
-    userListDiv.textContent = "誰もいません";
-    statusText.textContent = "未入室";
+            msgInput.disabled = true;
+            sendBtn.disabled  = true;
 
-    // 入力中表示も消す
-    typingInfo.textContent = "";
-});
+            // ★ 退室時：定型文ボタンを無効化＋非表示
+            document.querySelector(".template-row").style.display = "none";
+            document.querySelectorAll(".template-btn").forEach(btn => btn.disabled = true);
 
 
-        // メッセージ送信
+            if (infoBeforeJoin) infoBeforeJoin.style.display = "block";
+            chatLog.style.display = "none";
+
+            chatLog.innerHTML = "";
+            typingInfo.textContent = "";
+            statusText.textContent = "未入室";
+        });
+
+        /* メッセージ入力 ------------------------ */
         sendBtn.addEventListener("click", () => {
             const text = msgInput.value.trim();
             if (!text) return;
@@ -447,13 +383,16 @@ leaveBtn.addEventListener("click", () => {
             }, 1500);
         });
 
-        function setTyping(flag) {
-            if (isTyping === flag) return;
-            isTyping = flag;
-            socket.emit("typing", isTyping);
-        }
+        // ★ 定型文ボタンを押したらメッセージ送信
+        document.querySelectorAll(".template-btn").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const text = btn.dataset.text;
+                socket.emit("send-message", text);
+            });
+        });
 
-    
+
+
     </script>
 </body>
 </html>

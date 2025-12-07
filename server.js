@@ -10,14 +10,14 @@ app.use(express.static("public"));
 // 1部屋だけ使うので、部屋名は固定
 const ROOM_NAME = "main-room";
 
-// 接続中ユーザー一覧: { socket.id: { name } }
+// 接続中ユーザー一覧: { socket.id: { name, color } }
 const users = {};
 
 // 「入力中」のユーザー一覧: Set<socket.id>
 const typingUsers = new Set();
 
-// チャットログ（メモリ上に一時保存）
-const chatLog = [];  // { time, name, text } を順番に入れていく
+// チャットログ（メモリ上に一時保存）: { time, name, text, color }[]
+const chatLog = [];
 
 // 最大人数
 const MAX_USERS = 10;
@@ -30,7 +30,7 @@ function getTimeString() {
     });
 }
 
-// 全員にオンラインユーザー一覧を送信
+// 全員にオンラインユーザー一覧を送信（名前だけ）
 function broadcastUserList() {
     const userList = Object.values(users).map(u => u.name);
     io.to(ROOM_NAME).emit("user-list", userList);
@@ -47,8 +47,13 @@ function broadcastTypingUsers() {
 io.on("connection", (socket) => {
     console.log("connected:", socket.id);
 
+    // 接続直後に、現在のオンラインユーザー一覧をその人に送る
+    const currentUsers = Object.values(users).map(u => u.name);
+    socket.emit("user-list", currentUsers);
+
     // 入室リクエスト
-    socket.on("join", (name) => {
+    // 旧バージョン互換のため payload は string か { name, color } を許容
+    socket.on("join", (payload) => {
         // すでに入ってたら無視
         if (users[socket.id]) return;
 
@@ -59,16 +64,32 @@ io.on("connection", (socket) => {
             return;
         }
 
+        let name  = "";
+        let color = null;
+
+        if (typeof payload === "string") {
+            // 互換用：昔のクライアントは name だけ送ってくる
+            name = payload;
+        } else if (payload && typeof payload === "object") {
+            name  = payload.name;
+            color = payload.color;
+        }
+
         // 名前が空なら仮名
-        const displayName = name && name.trim()
-            ? name.trim()
+        const displayName = name && String(name).trim()
+            ? String(name).trim()
             : "user-" + Math.floor(Math.random() * 1000);
 
-        // 登録
-        users[socket.id] = { name: displayName };
+        // 色は文字列が来ていればそのまま保持（なければ null）
+        const bubbleColor = (typeof color === "string" && color.trim())
+            ? color.trim()
+            : null;
+
+        // 登録（name + color）
+        users[socket.id] = { name: displayName, color: bubbleColor };
         socket.join(ROOM_NAME);
 
-        console.log(displayName, "joined");
+        console.log(displayName, "joined with color:", bubbleColor);
 
         // システムメッセージ（入室）
         io.to(ROOM_NAME).emit("system-message", {
@@ -76,7 +97,7 @@ io.on("connection", (socket) => {
             text: `「${displayName}」さんが入室しました。`
         });
 
-        // ★ すでにチャットログがあれば、その入室した人にだけまとめて送る
+        // すでにチャットログがあれば、その入室した人にだけまとめて送る
         if (chatLog.length > 0) {
             socket.emit("chat-log", chatLog);
         }
@@ -96,13 +117,11 @@ io.on("connection", (socket) => {
 
         user.name = trimmed;
 
-        // システムメッセージ（名前変更）
         io.to(ROOM_NAME).emit("system-message", {
             time: getTimeString(),
             text: `「${oldName}」さんは名前を「${trimmed}」に変更しました。`
         });
 
-        // ユーザー一覧更新
         broadcastUserList();
     });
 
@@ -114,29 +133,31 @@ io.on("connection", (socket) => {
         const text = msg.trim();
         if (!text) return;
 
-        const time = getTimeString();
+        const time  = getTimeString();
+        const color = user.color || null;   // ★ ユーザーに設定された色
 
-        // ★ チャットログに保存
+        // チャットログに保存（color も一緒に）
         chatLog.push({
             time,
             name: user.name,
-            text
+            text,
+            color
         });
 
-        // ログが増えすぎないように、例えば最新200件だけ残す
-        if (chatLog.length > 200) {
-            chatLog.shift(); // 一番古いのを消す
+        // ログが増えすぎないように最新50件だけ残す
+        if (chatLog.length > 50) {
+            chatLog.shift();
         }
 
-        // いつもどおり全員に送信
+        // 全員に送信（color も一緒に届ける）
         io.to(ROOM_NAME).emit("chat-message", {
             time,
             name: user.name,
             text,
-            fromId: socket.id
+            fromId: socket.id,
+            color
         });
     });
-
 
     // 入力中フラグ
     socket.on("typing", (isTyping) => {
@@ -151,39 +172,34 @@ io.on("connection", (socket) => {
         broadcastTypingUsers();
     });
 
-
-        // 退室
+    // 退室（明示的）
     socket.on("leave", () => {
         const user = users[socket.id];
         if (!user) return;
 
         const leftName = user.name;
 
-        // ユーザー管理から削除して部屋から抜ける
         delete users[socket.id];
         typingUsers.delete(socket.id);
         socket.leave(ROOM_NAME);
 
-        // システムメッセージ（退室）
         io.to(ROOM_NAME).emit("system-message", {
             time: getTimeString(),
             text: `「${leftName}」さんが退室しました。`
         });
 
-        // ユーザー一覧・入力中一覧を更新
         broadcastUserList();
         broadcastTypingUsers();
 
-                // ★ 全員いなくなったらチャットログをクリア
+        // 全員いなくなったらチャットログをクリア
         if (Object.keys(users).length === 0) {
-            chatLog.length = 0;      // 配列を空にする
-            typingUsers.clear();      // 念のため入力中情報もリセット
+            chatLog.length = 0;
+            typingUsers.clear();
             console.log("All users left. chatLog cleared.");
         }
     });
 
-
-    // 切断
+    // 切断（ブラウザ閉じなど）
     socket.on("disconnect", () => {
         const user = users[socket.id];
         if (user) {
@@ -191,7 +207,6 @@ io.on("connection", (socket) => {
             delete users[socket.id];
             typingUsers.delete(socket.id);
 
-            // システムメッセージ（退室）
             io.to(ROOM_NAME).emit("system-message", {
                 time: getTimeString(),
                 text: `「${leftName}」さんが退室しました。`
@@ -200,12 +215,12 @@ io.on("connection", (socket) => {
             broadcastUserList();
             broadcastTypingUsers();
 
-                    // ★ 全員いなくなったらチャットログをクリア
-        if (Object.keys(users).length === 0) {
-            chatLog.length = 0;      // 配列を空にする
-            typingUsers.clear();      // 念のため入力中情報もリセット
-            console.log("All users left. chatLog cleared.");
-        }
+            // 全員いなくなったらチャットログをクリア
+            if (Object.keys(users).length === 0) {
+                chatLog.length = 0;
+                typingUsers.clear();
+                console.log("All users left. chatLog cleared.");
+            }
         }
 
         console.log("disconnected:", socket.id);

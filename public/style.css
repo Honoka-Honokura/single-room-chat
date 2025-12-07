@@ -1,0 +1,402 @@
+/* 全体レイアウト ------------------------ */
+body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0;
+    display: flex;
+    height: 100vh;
+    background: #f3f4f6;
+}
+
+/* 左：チャットエリア / 右：ユーザー一覧 */
+.chat-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #ddd;
+    min-width: 0;
+}
+
+.sidebar {
+    width: 220px;
+    padding: 8px;
+    box-sizing: border-box;
+}
+
+.sidebar h3 {
+    margin-top: 0;
+    font-size: 14px;
+}
+
+#userList {
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+header {
+    padding: 8px 12px;
+    border-bottom: 1px solid #ddd;
+    font-size: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#roomTitle {
+    font-weight: bold;
+}
+
+#statusText {
+    font-size: 12px;
+    color: #555;
+}
+
+/* 入室前のお知らせエリア */
+#chatInfoBeforeJoin {
+    padding: 8px 12px;
+    font-size: 13px;
+    color: #666;
+    border-bottom: 1px solid #ddd;
+}
+
+/* チャットログエリア -------------------- */
+#chatLog {
+    flex: 1;
+    padding: 8px 12px;
+    overflow-y: auto;
+    font-size: 14px;
+    background: #fafafa;
+    display: none; /* 初期状態は非表示（入室したら JS で block に） */
+}
+
+/* メッセージ表示 ------------------------ */
+.system-message {
+    color: #777;
+    font-size: 12px;
+    margin: 4px 0;
+}
+
+.message-row {
+    display: flex;
+    flex-direction: column;
+}
+
+.message-row.self {
+    align-items: flex-end;
+}
+
+.message {
+    margin: 4px 0;
+    padding: 6px 8px;
+    border-radius: 12px;
+    display: inline-block;
+    max-width: 80%;
+    word-break: break-word;
+    position: relative; /* しっぽの基準 */
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+
+.message-meta {
+    font-size: 11px;
+    color: #666;
+    margin-bottom: 2px;
+}
+
+.message-self {
+    background: #e0f3ff;
+    align-self: flex-end;
+}
+
+.message-other {
+    background: #ffffff;
+}
+
+/* 吹き出しのしっぽ ---------------------- */
+.message::after {
+    content: "";
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: var(--bubble-color, #ffffff);
+    transform: rotate(45deg);
+}
+
+.message-row.other .message::after {
+    bottom: -4px;
+    left: 14px;
+}
+
+.message-row.self .message::after {
+    bottom: -4px;
+    right: 14px;
+}
+
+/* フッター（入力まわり） ---------------- */
+.footer {
+    border-top: 1px solid #ddd;
+    padding: 8px 12px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.name-row {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+
+input[type="text"] {
+    padding: 4px 6px;
+    font-size: 13px;
+}
+
+/* 吹き出し色選択 ------------------------ */
+.color-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: #555;
+}
+
+.color-label {
+    white-space: nowrap;
+}
+
+.color-row label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+/* ラジオボタン本体は隠す */
+.color-row input[type="radio"] {
+    display: none;
+}
+
+/* 色見本の丸いスウォッチ */
+.color-swatch {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    border: 1px solid #d4d4d8;
+    display: inline-block;
+}
+
+/* パレットの色（HTML の value と合わせるだけ） */
+.color-pink   { background: #FFEBEE; }
+.color-blue   { background: #E3F2FD; }
+.color-green  { background: #E8F5E9; }
+.color-orange { background: #FFF3E0; }
+
+/* 選択中のものだけ縁取り */
+.color-row input[type="radio"]:checked + .color-swatch {
+    outline: 2px solid #4b5563;
+    outline-offset: 1px;
+}
+
+/* ▼ 定型文ボタンの行 */
+.template-row {
+    display: none;          /* 入室前は非表示 */
+    gap: 8px;
+    margin-top: 8px;
+}
+
+/* ▼ 定型文ボタンのスタイル（少し大きめ） */
+.template-btn {
+    background: #6b7280;    /* グレー */
+    color: white;
+    border: none;
+    padding: 10px 14px;     /* ← 大きくて押しやすい */
+    font-size: 14px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.template-btn:hover {
+    background: #4b5563;
+}
+
+.template-btn:disabled {
+    background: #9ca3af;
+    cursor: default;
+}
+
+
+#nameInput {
+    flex: 1;
+}
+
+#joinBtn,
+#renameBtn {
+    font-size: 13px;
+    padding: 4px 8px;
+    cursor: pointer;
+}
+
+/* メッセージ入力＆送信ボタン */
+.input-row {
+    display: none; /* 入室前は非表示（入室後に JS で flex に） */
+    gap: 4px;
+}
+
+#msgInput {
+    flex: 1;
+}
+
+#sendBtn {
+    background: #4b5563;
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+#sendBtn:hover {
+    background: #374151;
+}
+
+#sendBtn:disabled {
+    background: #9ca3af;
+    cursor: default;
+}
+
+/* 入室後だけ表示する小さなコントロール */
+.after-join-controls {
+    display: none;     /* 入室前は非表示 */
+    margin-top: 10px;
+    justify-content: flex-end;
+    gap: 4px;
+}
+
+.after-join-controls button {
+    background: #e5e7eb;
+    color: #444;
+    border: 1px solid #ccc;
+    padding: 3px 8px;
+    font-size: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.after-join-controls button:hover {
+    background: #d4d4d4;
+}
+
+/* 入室後はメッセージ入力欄を少し強調 */
+body.joined #msgInput {
+    border: 1px solid #2563eb;
+    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.15);
+}
+
+#typingInfo {
+    font-size: 11px;
+    color: #888;
+    min-height: 14px;
+}
+
+/* スマホ向けレイアウト ------------------ */
+@media (max-width: 768px) {
+
+    #sendBtn {
+        padding: 12px 14px;
+        font-size: 16px;
+    }
+
+    #msgInput {
+        padding: 12px 14px;
+        font-size: 17px;
+    }
+
+    .after-join-controls {
+        margin-top: 14px;
+    }
+
+    body {
+        flex-direction: column;
+        height: 100vh;
+    }
+
+    .chat-wrapper {
+        border-right: none;
+        border-bottom: 1px solid #ddd;
+    }
+
+    .sidebar {
+        width: 100%;
+        padding: 8px 10px;
+        border: none;
+        background: #ffffff;
+        box-sizing: border-box;
+    }
+
+    .sidebar h3 {
+        font-size: 13px;
+        margin-bottom: 4px;
+    }
+
+    #chatLog {
+        padding: 6px 8px;
+        font-size: 13px;
+    }
+
+    .footer {
+        padding: 6px 8px;
+        gap: 4px;
+    }
+
+    .name-row,
+    .input-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    #nameInput,
+    #msgInput,
+    input[type="text"] {
+        width: 100%;
+        box-sizing: border-box;
+        font-size: 14px;
+    }
+
+    .color-row {
+        flex-wrap: wrap;
+        font-size: 12px;
+    }
+
+    #joinBtn,
+    #renameBtn,
+    #leaveBtn {
+        width: 100%;
+        font-size: 14px;
+        padding: 6px 0;
+    }
+
+    .message {
+        max-width: 90%;
+        font-size: 14px;
+    }
+
+    .message-meta {
+        font-size: 11px;
+    }
+
+        /* 定型文ボタンの行を横並び・2等分に */
+    .template-row {
+        width: 100%;
+        gap: 8px;
+    }
+
+    /* スマホではボタンを横いっぱいに広げる */
+    .template-btn {
+        flex: 1;                /* ← 幅を均等に伸ばす */
+        padding: 10px 0;        /* ← 指で押しやすく */
+        font-size: 16px;
+        text-align: center;
+    }
+
+}
