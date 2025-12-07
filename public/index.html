@@ -96,7 +96,6 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-
         // ★ ブラウザごとのクライアントIDを発行・保存
         let clientId = localStorage.getItem("chatClientId");
         if (!clientId) {
@@ -171,27 +170,26 @@
             return checked ? checked.value : null;
         })();
 
-        // 色が変更されたら currentColor を更新し、
-        // 入室済みならサーバーにも色変更を通知する
+        // 状態
+        let joined          = false;
+        let mySocketId      = null;
+        let typingTimeout   = null;
+        let isTyping        = false;
+        let shouldAutoJoin  = false;          // 「今後も自動で再入室していいか」
+        let lastKnownName   = "";            // 最後に使っていた名前
+        let lastKnownColor  = currentColor;  // 最後に選んでいた吹き出し色
+
+        /* 吹き出し色変更 ------------------------ */
         colorInputs.forEach(input => {
             input.addEventListener("change", () => {
-                currentColor = input.value;
-                lastKnownColor = currentColor; 
+                currentColor   = input.value;
+                lastKnownColor = currentColor;
 
                 if (joined) {
                     socket.emit("change-color", currentColor);
                 }
             });
         });
-
-        /* 状態 ---------------------------------- */
-        let joined        = false;
-        let mySocketId    = null;
-        let typingTimeout = null;
-        let isTyping      = false;
-        let shouldAutoJoin  = false;          // 「今後も自動で再入室していいか」
-        let lastKnownName   = "";            // 最後に使っていた名前
-        let lastKnownColor  = currentColor;  // 最後に選んでいた吹き出し色
 
         /* ユーティリティ ------------------------ */
         function trimChatLog() {
@@ -219,11 +217,11 @@
 
                 socket.emit("join", {
                     name:  sendName,
-                    color: sendColor
+                    color: sendColor,
+                    clientId  // ★ 再接続時も clientId を送る
                 });
             }
         });
-
 
         socket.on("room-full", () => {
             alert("この部屋は満員です（10人まで）");
@@ -237,7 +235,6 @@
             trimChatLog();
             chatLog.scrollTop = 0;
         });
-
 
         // 入室時に送られてくる過去ログ
         socket.on("chat-log", (logs) => {
@@ -269,7 +266,6 @@
             chatLog.scrollTop = 0;
         });
 
-
         // 通常メッセージ
         socket.on("chat-message", ({ time, name, text, fromId, color }) => {
             const row = document.createElement("div");
@@ -284,7 +280,6 @@
             msgDiv.className = "message " + (isSelf ? "message-self" : "message-other");
             msgDiv.textContent = text;
 
-            // color を優先
             const userColor = color || getColorForName(name);
 
             msgDiv.style.backgroundColor = userColor;
@@ -299,22 +294,17 @@
             chatLog.scrollTop = 0;
         });
 
-
-        // ★ 連投しすぎたときの警告表示
+        // 連投しすぎの警告（サーバー側で rate-limit を emit している場合用）
         socket.on("rate-limit", ({ waitMs }) => {
             const sec = Math.ceil(waitMs / 1000);
-
-            // typingInfo を流用して軽く注意を出す
             typingInfo.textContent = `送信間隔が短すぎます。あと ${sec} 秒待ってください。`;
 
             setTimeout(() => {
-                // 他の表示で上書きされてない場合だけ消す
                 if (typingInfo.textContent.startsWith("送信間隔が短すぎます")) {
                     typingInfo.textContent = "";
                 }
             }, 2000);
         });
-
 
         // オンラインユーザー
         socket.on("user-list", (names) => {
@@ -360,9 +350,8 @@
             const name  = nameInput.value.trim() || "";
             const color = currentColor;   // 選択中の色
 
-            // name と color をまとめて送る
+            // name / color / clientId をまとめて送る
             socket.emit("join", { name, color, clientId });
-
 
             // ★ 自動再入室ON & 今回の情報を覚えておく
             shouldAutoJoin = true;
@@ -417,7 +406,7 @@
             socket.emit("change-name", trimmed);
             nameInput.value = trimmed;
 
-            // ★ 自動再入室用の名前も更新しておく
+            // 自動再入室用の名前も更新しておく
             lastKnownName = trimmed;
         });
 
@@ -509,42 +498,34 @@
             });
         }
 
-        // ★ 自動退室（サーバー側からの強制退室通知）
+        // 自動退室（サーバー側からの強制退室通知）
         socket.on("force-leave", ({ reason }) => {
-            // すでに未入室状態なら何もしない
             if (!joined) return;
 
-            // UI を「退室」状態に戻す（leaveBtn の処理とほぼ同じ）
             joined = false;
             document.body.classList.remove("joined");
 
-            // ★ 手動で退室したので、自動再入室は無効化
+            // ★ 自動退室のときは自動再入室は無効化
             shouldAutoJoin = false;
             lastKnownName  = "";
             lastKnownColor = null;
 
-            // メッセージ入力欄を非表示
             inputRow.style.display = "none";
 
-            // 名前＋入室行を再表示
             joinRow.style.display = "flex";
             joinBtn.disabled = false;
             joinBtn.style.display = "inline-block";
 
-            // 名前変更＆退室ボタンを無効化＋非表示
             renameBtn.disabled = true;
             leaveBtn.disabled  = true;
             afterJoinControls.style.display = "none";
 
-            // メッセージ入力を無効化
             msgInput.disabled = true;
             sendBtn.disabled  = true;
 
-            // 定型文ボタンも無効化＋非表示
             document.querySelector(".template-row").style.display = "none";
             document.querySelectorAll(".template-btn").forEach(btn => btn.disabled = true);
 
-            // チャットログ非表示 & 中身リセット
             if (infoBeforeJoin) infoBeforeJoin.style.display = "block";
             chatLog.style.display = "none";
             chatLog.innerHTML = "";
@@ -552,10 +533,8 @@
             typingInfo.textContent = "";
             statusText.textContent = "未入室";
 
-            // ちょっとだけ理由を教えてあげる
             alert("10分間操作がなかったため、自動的に退室しました。");
         });
-
     </script>
 </body>
 </html>
