@@ -5,7 +5,9 @@ body {
     display: flex;
     height: 100vh;
     background: #f3f4f6;
+    overflow: hidden;   /* ★ ページ全体はスクロールさせない */
 }
+
 
 /* 左：チャットエリア / 右：ユーザー一覧 */
 .chat-wrapper {
@@ -14,13 +16,16 @@ body {
     flex-direction: column;
     border-right: 1px solid #ddd;
     min-width: 0;
+    height: 100vh;   /* ★ ここを追加：画面の高さぴったりにする */
 }
 
 .sidebar {
     width: 220px;
     padding: 8px;
     box-sizing: border-box;
+    overflow-y: auto;   /* ★ 右側も独立してスクロールできるように */
 }
+
 
 .sidebar h3 {
     margin-top: 0;
@@ -39,6 +44,12 @@ header {
     display: flex;
     justify-content: space-between;
     align-items: center;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 #roomTitle {
@@ -299,8 +310,82 @@ body.joined #msgInput {
     min-height: 14px;
 }
 
+/* モバイル用オンライン一覧ボタン（デフォルトは非表示） */
+.mobile-user-btn {
+    display: none;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid #d4d4d4;
+    background: #ffffff;
+    color: #374151;
+    cursor: pointer;
+}
+
+/* オンライン一覧モーダル（スマホ用） */
+.mobile-user-overlay {
+    display: none;              /* JSで表示切り替え */
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+}
+
+.mobile-user-panel {
+    width: 90%;
+    max-width: 340px;
+    max-height: 70vh;
+    background: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+}
+
+.mobile-user-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.mobile-user-close {
+    border: none;
+    background: transparent;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 6px;
+}
+
+.mobile-user-list {
+    margin-top: 8px;
+    font-size: 14px;
+    line-height: 1.6;
+    max-height: 56vh;
+    overflow-y: auto;
+}
+
+
 /* スマホ向けレイアウト ------------------ */
 @media (max-width: 768px) {
+
+    body {
+        flex-direction: column;
+        height: 100vh;
+    }
+
+    /* ▼ 入力欄をタップしてもズームされないようにする */
+    input[type="text"],
+    #msgInput,
+    #nameInput,
+    button {
+        font-size: 16px !important; 
+    }
 
     #sendBtn {
         padding: 12px 14px;
@@ -316,14 +401,10 @@ body.joined #msgInput {
         margin-top: 14px;
     }
 
-    body {
-        flex-direction: column;
-        height: 100vh;
-    }
-
     .chat-wrapper {
         border-right: none;
         border-bottom: 1px solid #ddd;
+        height: 100vh;   /* ★ スマホでもチャットエリアを画面いっぱいに */
     }
 
     .sidebar {
@@ -397,6 +478,24 @@ body.joined #msgInput {
         padding: 10px 0;        /* ← 指で押しやすく */
         font-size: 16px;
         text-align: center;
+    }
+
+    /* サイドバーはスマホでは非表示にする */
+    .sidebar {
+        display: none;
+    }
+
+    /* スマホのときだけ「オンライン一覧」ボタンを表示 */
+    .mobile-user-btn {
+        display: inline-block;
+    }
+
+    /* チャットエリアは横幅いっぱい使う */
+    .chat-wrapper {
+        border-right: none;
+        border-bottom: 1px solid #ddd;
+        width: 100%;
+        height: 100vh;   /* ← ここ前回追加したやつそのままでOK */
     }
 
 }
