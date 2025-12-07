@@ -26,16 +26,36 @@ const MAX_USERS = 10;
 // 10分（ミリ秒）
 const AUTO_LEAVE_MS = 10 * 60 * 1000;
 
+// 連投制限（1秒）
+const MIN_INTERVAL_MS = 1000;
+
+// clientId ごとの最後のアクション時刻（発言 or ダイス）
+const lastActionTimeByClientId = {};
+
+// 共通の連投チェック関数
+function checkRateLimit(clientId) {
+    if (!clientId) return 0;
+
+    const now  = Date.now();
+    const last = lastActionTimeByClientId[clientId] || 0;
+    const diff = now - last;
+
+    if (diff < MIN_INTERVAL_MS) {
+        // 残り待ち時間を返す（ミリ秒）
+        return MIN_INTERVAL_MS - diff;
+    }
+
+    // OK のときは「今」を記録して 0 を返す
+    lastActionTimeByClientId[clientId] = now;
+    return 0;
+}
+
 // ★ socket.id → clientId の対応
 const socketClientIds = {};
 
 // ★ clientId ごとの「最後に *意図せず* 退室した時刻」
 //   （ブラウザ閉じなどの disconnect 専用）
 const lastLeaveByClientId = {};
-
-// ★ 連投防止用（前回メッセージ送信時刻）: { clientId: timestamp(ms) }
-const lastMessageTimeByClientId = {};
-const MESSAGE_INTERVAL_MS = 1000;  // 1秒に1通まで
 
 // ★ URL貼りすぎ防止
 const URL_REGEX = /(https?:\/\/[^\s]+)/gi;
@@ -298,6 +318,8 @@ io.on("connection", (socket) => {
         touchActivity(socket.id);
     });
 
+
+
     // 名前変更
     socket.on("change-name", (newName) => {
         const user = users[socket.id];
@@ -343,19 +365,6 @@ io.on("connection", (socket) => {
             return;
         }
 
-        // ここから clientId 単位の連投防止チェック
-        const now = Date.now();
-        const clientId = socketClientIds[socket.id] || socket.id; // 念のため fallback
-
-        const last = lastMessageTimeByClientId[clientId] || 0;
-        if (now - last < MESSAGE_INTERVAL_MS) {
-            socket.emit("system-message", {
-                time: getTimeString(),
-                text: `連投防止のため、${MESSAGE_INTERVAL_MS / 1000}秒待ってから送信してください。`
-            });
-            return;
-        }
-
         // NGワードチェック
         if (containsNgWord(text)) {
             socket.emit("system-message", {
@@ -379,7 +388,6 @@ io.on("connection", (socket) => {
         if (urls.length > 0) {
             try {
                 for (const raw of urls) {
-                    // new URL は http(s) を前提とするので、補完しておく
                     const urlStr = raw.startsWith("http") ? raw : `http://${raw}`;
                     const u = new URL(urlStr);
                     const host = u.hostname.toLowerCase();
@@ -393,14 +401,19 @@ io.on("connection", (socket) => {
                     }
                 }
             } catch (e) {
-                // URL 解析に失敗した場合は、特に何もせず続行（貼りすぎチェックは済んでいる）
                 console.warn("URL parse error:", e);
             }
         }
 
+        // ★ ここで共通の連投チェック（メッセージ & ダイス共通）
+        const clientId = socketClientIds[socket.id] || socket.id; // 念のため fallback
+        const waitMs = checkRateLimit(clientId);
+        if (waitMs > 0) {
+            socket.emit("rate-limit", { waitMs });
+            return;
+        }
 
-        // ここまでOKなら送信を許可（clientId の送信時刻を更新）
-        lastMessageTimeByClientId[clientId] = now;
+        // ここまでOKなら送信を許可
         touchActivity(socket.id);
 
         const time = getTimeString();
@@ -414,7 +427,6 @@ io.on("connection", (socket) => {
         };
         chatLog.push(logEntry);
 
-        // ログが増えすぎないように最新50件だけ残す
         if (chatLog.length > 50) {
             chatLog.shift();
         }
@@ -428,6 +440,49 @@ io.on("connection", (socket) => {
             color: user.color || null
         });
     });
+
+
+
+    // 2D6 のダイスを振る
+    socket.on("roll-dice", () => {
+        const user = users[socket.id];
+        if (!user) return;  // 未入室なら無視
+
+        // ★ メッセージと同じ 1秒連投制限（clientId 単位）
+        const clientId = socketClientIds[socket.id] || socket.id;
+        const waitMs = checkRateLimit(clientId);
+        if (waitMs > 0) {
+            socket.emit("rate-limit", { waitMs });
+            return;
+        }
+
+        const d1 = Math.floor(Math.random() * 6) + 1;
+        const d2 = Math.floor(Math.random() * 6) + 1;
+        const total = d1 + d2;
+
+        const time  = getTimeString();
+        const name  = user.name || "ななし";
+        const color = user.color || "#FFFFFF";
+
+        const text = `🎲 ${name} が 2D6 を振った：${d1} ＋ ${d2} ＝ ${total}`;
+
+        // チャットログに追加
+        chatLog.push({ time, name, text, color });
+        if (chatLog.length > 50) {
+            chatLog.shift();
+        }
+
+        // 通常のメッセージとして全員に送る
+        io.to(ROOM_NAME).emit("chat-message", {
+            time,
+            name,
+            text,
+            fromId: socket.id,
+            color
+        });
+    });
+
+
 
     // 入力中フラグ
     socket.on("typing", (isTyping) => {

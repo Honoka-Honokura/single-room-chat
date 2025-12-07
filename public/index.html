@@ -74,11 +74,14 @@
                 <button id="sendBtn" disabled>送信</button>
             </div>
 
-            <!-- 定型文ボタン（入室後に使う） -->
+            <!-- 定型文ボタン・ダイスボタン（入室後に使う） -->
             <div class="template-row">
                 <button class="template-btn" data-text="逝きそうです♡" disabled>逝きそうです♡</button>
                 <button class="template-btn" data-text="逝きました♡" disabled>逝きました♡</button>
+                <button id="roll2d6Btn" class="dice-btn" disabled>🎲</button>
             </div>
+
+
 
             <!-- 入室後だけ見える小さなコントロール -->
             <div class="after-join-controls">
@@ -175,6 +178,8 @@
         const mobileUserOverlay = document.getElementById("mobileUserOverlay");
         const mobileUserClose   = document.getElementById("mobileUserClose");
         const mobileUserList    = document.getElementById("mobileUserList");
+        const roll2d6Btn        = document.getElementById("roll2d6Btn"); 
+
 
         // 吹き出し色のラジオボタン
         const colorInputs = document.querySelectorAll('input[name="bubbleColor"]');
@@ -393,6 +398,9 @@
             msgInput.disabled = false;
             sendBtn.disabled  = false;
 
+            // ダイスボタンも有効化
+            if (roll2d6Btn) roll2d6Btn.disabled = false;
+
             // 定型文ボタンを入室後に有効化して表示
             document.querySelector(".template-row").style.display = "flex";
             templateButtons.forEach(btn => btn.disabled = false);
@@ -448,6 +456,9 @@
             msgInput.disabled = true;
             sendBtn.disabled  = true;
 
+            // ダイスボタンも無効化
+            if (roll2d6Btn) roll2d6Btn.disabled = true;
+
             // 退室時：定型文ボタンを無効化＋非表示
             document.querySelector(".template-row").style.display = "none";
             templateButtons.forEach(btn => btn.disabled = true);
@@ -469,6 +480,15 @@
             msgInput.value = "";
             setTyping(false);
         });
+
+        // ダイスボタン（2D6） ------------------------
+        if (roll2d6Btn) {
+            roll2d6Btn.addEventListener("click", () => {
+                if (!joined) return;  // 念のため未入室時ガード
+                socket.emit("roll-dice"); // サーバーに「振って」とお願い
+            });
+        }
+
 
         msgInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
@@ -542,6 +562,9 @@
 
             document.querySelector(".template-row").style.display = "none";
             document.querySelectorAll(".template-btn").forEach(btn => btn.disabled = true);
+
+            // ダイスボタンも無効化
+            if (roll2d6Btn) roll2d6Btn.disabled = true; 
 
             if (infoBeforeJoin) infoBeforeJoin.style.display = "block";
             if (preLoginNotice) preLoginNotice.style.display = "block";
