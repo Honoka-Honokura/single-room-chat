@@ -33,40 +33,61 @@ const socketClientIds = {};
 //   （ブラウザ閉じなどの disconnect 専用）
 const lastLeaveByClientId = {};
 
-// ★ 連投防止用（前回メッセージ送信時刻）: { socket.id: timestamp(ms) }
-const lastMessageTimes = {};
-const MIN_INTERVAL_MS = 1000;  // 1秒に1通まで
+// ★ 連投防止用（前回メッセージ送信時刻）: { clientId: timestamp(ms) }
+const lastMessageTimeByClientId = {};
+const MESSAGE_INTERVAL_MS = 1000;  // 1秒に1通まで
 
 // ★ URL貼りすぎ防止
 const URL_REGEX = /(https?:\/\/[^\s]+)/gi;
 const MAX_URLS_PER_MESSAGE = 3; // 1メッセージ内の最大URL数
 
-// ★ NGワードリスト（必要に応じて調整してOK）
-const NG_WORDS = [
-    // 暴力・犯罪系
-    "殺す", "死ね", "自殺", "誘拐", "テロ", "爆破",
-
-    // 差別・侮辱
-    "障害者", "ガイジ", "池沼", "知的障害", "キモい", "ハゲ",
-
-    // 過度な暴言
-    "バカ", "アホ", "消えろ",
-
-    // スパム/詐欺系
-    "crypto", "ビットコイン", "副業", "投資しませんか", "出会い系", "DMください", "line交換",
-
-    // ポルノスパム用
-    "porn", "sex"
+// ★ 危険・スパムとみなすドメイン（必要に応じて調整）
+const BLOCKED_URL_DOMAINS = [
+    "bit.ly",
+    "t.co",
+    "discord.gg",
+    "goo.gl",
+    "tinyurl.com"
 ];
 
-// NGワード判定（簡易版）
-function containsNgWord(text) {
-    const lower = text.toLowerCase();
-    return NG_WORDS.some(word => {
-        if (!word) return false;
-        return lower.includes(word.toLowerCase());
-    });
+
+// ★ NGワードチェック用の正規化
+function normalizeForCheck(text) {
+    if (!text) return "";
+    return text
+        .toString()
+        .normalize("NFKC")   // 全角/半角などを揃える
+        .toLowerCase();      // 英字は小文字に
 }
+
+// ★ NGワードリスト（必要に応じて調整してOK）
+// normalize後の文字列で扱う前提
+const NG_WORDS = [
+    // 暴力・犯罪系
+    "殺す", "死ね", "自殺", "じさつ", "誘拐", "ゆうかい",
+
+    // 差別・侮辱（※必要に応じて調整）
+    "障害者", "知的障害", "ガイジ", "池沼",
+
+    // 過度な暴言
+    "バカ", "アホ", "消えろ", 
+
+    // スパム/詐欺系
+    "投資しませんか", "簡単に稼げ", "出会い系", "出会いサイト",
+
+    // ポルノ・スパム系（マイルドに）
+    "sex", "porn" 
+];
+
+
+// NGワード判定（正規化＋単純リストのみ）
+function containsNgWord(text) {
+    const normalized = normalizeForCheck(text);
+
+    // NG_WORDS の部分一致のみで判定
+    return NG_WORDS.some(word => normalized.includes(word));
+}
+
 
 // ===========================
 // 個人情報（メール・電話番号）の検出
@@ -88,13 +109,17 @@ const PHONE_REGEXES = [
 function containsPersonalInfo(text) {
     if (!text) return false;
 
-    if (EMAIL_REGEX.test(text)) return true;
+    const normalized = normalizeForCheck(text);
+
+    if (EMAIL_REGEX.test(normalized)) return true;
 
     for (const re of PHONE_REGEXES) {
-        if (re.test(text)) return true;
+        if (re.test(normalized)) return true;
     }
     return false;
 }
+
+
 
 // ===========================
 // 無操作タイマー用
@@ -110,13 +135,14 @@ function touchActivity(socketId) {
     lastActivityTimes[socketId] = Date.now();
 }
 
-// 時刻文字列を作る関数
 function getTimeString() {
     return new Date().toLocaleTimeString("ja-JP", {
+        timeZone: "Asia/Tokyo",
         hour: "2-digit",
         minute: "2-digit"
     });
 }
+
 
 // 全員にオンラインユーザー一覧を送信
 function broadcastUserList() {
@@ -153,8 +179,15 @@ setInterval(() => {
         // サーバー側の状態を削除
         delete users[socketId];
         typingUsers.delete(socketId);
-        delete lastMessageTimes[socketId];
         delete lastActivityTimes[socketId];
+
+        // clientId ベースの情報も必要ならここで掃除
+        const clientId = socketClientIds[socketId];
+        if (clientId) {
+            // 連投時刻は残してもいいが、気になるなら消す
+            // delete lastMessageTimeByClientId[clientId];
+            delete socketClientIds[socketId];
+        }
 
         const s = io.sockets.sockets.get(socketId);
         if (s) {
@@ -163,7 +196,7 @@ setInterval(() => {
             s.emit("force-leave", { reason: "timeout" });
         }
 
-        // 他のユーザーにシステムメッセージ（★これは残す）
+        // 他のユーザーにシステムメッセージ
         io.to(ROOM_NAME).emit("system-message", {
             time: getTimeString(),
             text: `「${leftName}」さんは一定時間操作がなかったため退室しました。`
@@ -310,13 +343,15 @@ io.on("connection", (socket) => {
             return;
         }
 
-        // 連投防止チェック
+        // ここから clientId 単位の連投防止チェック
         const now = Date.now();
-        const last = lastMessageTimes[socket.id] || 0;
-        if (now - last < MIN_INTERVAL_MS) {
+        const clientId = socketClientIds[socket.id] || socket.id; // 念のため fallback
+
+        const last = lastMessageTimeByClientId[clientId] || 0;
+        if (now - last < MESSAGE_INTERVAL_MS) {
             socket.emit("system-message", {
                 time: getTimeString(),
-                text: `連投防止のため、${MIN_INTERVAL_MS / 1000}秒待ってから送信してください。`
+                text: `連投防止のため、${MESSAGE_INTERVAL_MS / 1000}秒待ってから送信してください。`
             });
             return;
         }
@@ -340,8 +375,32 @@ io.on("connection", (socket) => {
             return;
         }
 
-        // ここまでOKなら送信を許可
-        lastMessageTimes[socket.id] = now;
+        // 危険なドメインの URL をブロック
+        if (urls.length > 0) {
+            try {
+                for (const raw of urls) {
+                    // new URL は http(s) を前提とするので、補完しておく
+                    const urlStr = raw.startsWith("http") ? raw : `http://${raw}`;
+                    const u = new URL(urlStr);
+                    const host = u.hostname.toLowerCase();
+
+                    if (BLOCKED_URL_DOMAINS.some(domain => host === domain || host.endsWith("." + domain))) {
+                        socket.emit("system-message", {
+                            time: getTimeString(),
+                            text: "安全のため、一部の短縮URLや招待リンクは送信できません。"
+                        });
+                        return;
+                    }
+                }
+            } catch (e) {
+                // URL 解析に失敗した場合は、特に何もせず続行（貼りすぎチェックは済んでいる）
+                console.warn("URL parse error:", e);
+            }
+        }
+
+
+        // ここまでOKなら送信を許可（clientId の送信時刻を更新）
+        lastMessageTimeByClientId[clientId] = now;
         touchActivity(socket.id);
 
         const time = getTimeString();
@@ -391,14 +450,17 @@ io.on("connection", (socket) => {
 
         const leftName = user.name;
 
-        // ★ 手動退室では「再入室メッセージ抑制」の対象にしないので
-        //     lastLeaveByClientId は触らない
         const clientId = socketClientIds[socket.id];
-        delete socketClientIds[socket.id];
+        if (clientId) {
+            // 明示的退室なので、再入室時にメッセージを抑制しないよう
+            // lastLeaveByClientId は更新しない設計
+            delete socketClientIds[socket.id];
+            // 必要なら clientId の連投情報も掃除してよい
+            // delete lastMessageTimeByClientId[clientId];
+        }
 
         delete users[socket.id];
         typingUsers.delete(socket.id);
-        delete lastMessageTimes[socket.id];
         delete lastActivityTimes[socket.id];
 
         socket.leave(ROOM_NAME);
@@ -429,12 +491,13 @@ io.on("connection", (socket) => {
         if (clientId) {
             lastLeaveByClientId[clientId] = Date.now();
             delete socketClientIds[socket.id];
+            // 必要ならここで連投情報を消すこともできる
+            // delete lastMessageTimeByClientId[clientId];
         }
 
         if (user) {
             delete users[socket.id];
             typingUsers.delete(socket.id);
-            delete lastMessageTimes[socket.id];
             delete lastActivityTimes[socket.id];
 
             // ※ disconnect では「退室しました」メッセージは出さない

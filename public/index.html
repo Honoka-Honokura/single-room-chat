@@ -23,6 +23,20 @@
             ※ 入室すると、この下にチャットが表示されます。
         </div>
 
+        <!-- 利用上の注意ボックス（入室前のみ表示） -->
+        <div class="chat-notice" id="preLoginNotice">
+            <p class="chat-notice-title">⚠ ご利用上の注意</p>
+            <ul class="chat-notice-list">
+                <li>電話番号・メールアドレス・SNS ID などの <strong>個人情報は書き込まない</strong> でください。</li>
+                <li>LINE や X（Twitter）など、<strong>外部サービスのID交換はしない</strong>でください。</li>
+                <li><strong>10分間操作がないと自動で退室</strong>します。（再度入室し直してください）</li>
+                <li>ブラウザや通信が切れたあと <strong>10分以内に戻った場合は「入室しました」の通知が出ない</strong>ことがあります。</li>
+                <li>このチャットはテスト運用中です。不具合などもあるかと思いますがご容赦ください。</li>
+            </ul>
+        </div>
+
+
+
         <div id="chatLog"></div>
 
         <div class="footer">
@@ -155,6 +169,7 @@
         const afterJoinControls = document.querySelector(".after-join-controls");
         const inputRow          = document.querySelector(".input-row");
         const infoBeforeJoin    = document.getElementById("chatInfoBeforeJoin");
+        const preLoginNotice    = document.getElementById("preLoginNotice");
         const templateButtons   = document.querySelectorAll(".template-btn");
         const mobileUserBtn     = document.getElementById("mobileUserBtn");
         const mobileUserOverlay = document.getElementById("mobileUserOverlay");
@@ -383,6 +398,7 @@
             templateButtons.forEach(btn => btn.disabled = false);
 
             if (infoBeforeJoin) infoBeforeJoin.style.display = "none";
+            if (preLoginNotice) preLoginNotice.style.display = "none";
             chatLog.style.display = "block";
 
             if (!name) {
@@ -437,6 +453,7 @@
             templateButtons.forEach(btn => btn.disabled = true);
 
             if (infoBeforeJoin) infoBeforeJoin.style.display = "block";
+            if (preLoginNotice) preLoginNotice.style.display = "block";
             chatLog.style.display = "none";
 
             chatLog.innerHTML = "";
@@ -527,6 +544,7 @@
             document.querySelectorAll(".template-btn").forEach(btn => btn.disabled = true);
 
             if (infoBeforeJoin) infoBeforeJoin.style.display = "block";
+            if (preLoginNotice) preLoginNotice.style.display = "block";
             chatLog.style.display = "none";
             chatLog.innerHTML = "";
 
