@@ -168,6 +168,7 @@
         colorInputs.forEach(input => {
             input.addEventListener("change", () => {
                 currentColor = input.value;
+                lastKnownColor = currentColor; 
 
                 if (joined) {
                     socket.emit("change-color", currentColor);
@@ -180,6 +181,9 @@
         let mySocketId    = null;
         let typingTimeout = null;
         let isTyping      = false;
+        let shouldAutoJoin  = false;          // 「今後も自動で再入室していいか」
+        let lastKnownName   = "";            // 最後に使っていた名前
+        let lastKnownColor  = currentColor;  // 最後に選んでいた吹き出し色
 
         /* ユーティリティ ------------------------ */
         function trimChatLog() {
@@ -198,7 +202,20 @@
         /* Socket.io イベント -------------------- */
         socket.on("connect", () => {
             mySocketId = socket.id;
+
+            // ★ 以前「入室中」で、かつ自動再入室が許可されている場合は自動で join し直す
+            if (joined && shouldAutoJoin) {
+                const fallbackName  = nameInput.value.trim() || "";
+                const sendName      = lastKnownName || fallbackName;
+                const sendColor     = lastKnownColor || currentColor || null;
+
+                socket.emit("join", {
+                    name:  sendName,
+                    color: sendColor
+                });
+            }
         });
+
 
         socket.on("room-full", () => {
             alert("この部屋は満員です（10人まで）");
@@ -338,6 +355,13 @@
             // name と color をまとめて送る
             socket.emit("join", { name, color });
 
+            // ★ 自動再入室ON & 今回の情報を覚えておく
+            shouldAutoJoin = true;
+            if (name) {
+                lastKnownName = name;
+            }
+            lastKnownColor = color;
+
             joined = true;
 
             // メッセージ入力ボックスを表示
@@ -383,6 +407,9 @@
 
             socket.emit("change-name", trimmed);
             nameInput.value = trimmed;
+
+            // ★ 自動再入室用の名前も更新しておく
+            lastKnownName = trimmed;
         });
 
         leaveBtn.addEventListener("click", () => {
@@ -481,6 +508,11 @@
             // UI を「退室」状態に戻す（leaveBtn の処理とほぼ同じ）
             joined = false;
             document.body.classList.remove("joined");
+
+            // ★ 手動で退室したので、自動再入室は無効化
+            shouldAutoJoin = false;
+            lastKnownName  = "";
+            lastKnownColor = null;
 
             // メッセージ入力欄を非表示
             inputRow.style.display = "none";
