@@ -96,6 +96,14 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
+
+        // ★ ブラウザごとのクライアントIDを発行・保存
+        let clientId = localStorage.getItem("chatClientId");
+        if (!clientId) {
+            clientId = "c-" + Math.random().toString(36).slice(2);
+            localStorage.setItem("chatClientId", clientId);
+        }
+
         /* ユーザーごとの色決定 ------------------ */
         function hashStringToNumber(str) {
             let hash = 0;
@@ -353,7 +361,8 @@
             const color = currentColor;   // 選択中の色
 
             // name と color をまとめて送る
-            socket.emit("join", { name, color });
+            socket.emit("join", { name, color, clientId });
+
 
             // ★ 自動再入室ON & 今回の情報を覚えておく
             shouldAutoJoin = true;

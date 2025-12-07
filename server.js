@@ -23,6 +23,15 @@ const chatLog = [];
 // 最大人数
 const MAX_USERS = 10;
 
+// 10分（ミリ秒）
+const AUTO_LEAVE_MS = 10 * 60 * 1000;
+
+// ★ socket.id → clientId の対応
+const socketClientIds = {};
+
+// ★ clientId ごとの「最後に退室した時刻」
+const lastLeaveByClientId = {};
+
 // ★ 連投防止用（前回メッセージ送信時刻）: { socket.id: timestamp(ms) }
 const lastMessageTimes = {};
 const MIN_INTERVAL_MS = 1000;  // 1秒に1通まで
@@ -87,7 +96,7 @@ function containsPersonalInfo(text) {
 }
 
 // ===========================
-// ★ 無操作タイマー用
+// 無操作タイマー用
 // ===========================
 
 // 最終アクティビティ時刻: { socket.id: timestamp(ms) }
@@ -123,7 +132,7 @@ function broadcastTypingUsers() {
 }
 
 // ===========================
-// ★ 一定時間無操作ユーザーを自動退室させるチェック
+// 一定時間無操作ユーザーを自動退室させるチェック
 // ===========================
 setInterval(() => {
     const now = Date.now();
@@ -139,21 +148,26 @@ setInterval(() => {
         }
 
         const leftName = user.name;
+        const clientId = socketClientIds[socketId];
 
         // サーバー側の状態を削除
         delete users[socketId];
         typingUsers.delete(socketId);
         delete lastMessageTimes[socketId];
         delete lastActivityTimes[socketId];
+        delete socketClientIds[socketId];
+
+        // このクライアントの「最終退室時刻」を記録
+        if (clientId) {
+            lastLeaveByClientId[clientId] = Date.now();
+        }
 
         // 該当ソケットを取得
         const s = io.sockets.sockets.get(socketId);
         if (s) {
             s.leave(ROOM_NAME);
-            // ★ クライアントに「自動退室された」ことを通知
-            s.emit("force-leave", {
-                reason: "timeout"
-            });
+            // 自動退室されたことを本人に通知（必要に応じて UI で使う）
+            s.emit("force-leave", { reason: "timeout" });
         }
 
         // 他のユーザーにシステムメッセージ
@@ -186,9 +200,10 @@ io.on("connection", (socket) => {
 
     // 入室リクエスト
     // 旧仕様: join("名前")
-    // 新仕様: join({ name, color })
+    // 新仕様: join({ name, color, clientId })
     socket.on("join", (payload) => {
-        if (users[socket.id]) return;  // すでに入ってたら無視
+        // すでに入ってたら無視
+        if (users[socket.id]) return;
 
         // 人数制限
         const currentCount = Object.keys(users).length;
@@ -197,15 +212,25 @@ io.on("connection", (socket) => {
             return;
         }
 
-        let rawName = "";
-        let color   = null;
+        let rawName  = "";
+        let color    = null;
+        let clientId = null;
 
         if (typeof payload === "string" || payload === undefined || payload === null) {
             rawName = payload || "";
         } else {
-            rawName = payload.name || "";
-            color   = payload.color || null;
+            rawName  = payload.name  || "";
+            color    = payload.color || null;
+            clientId = payload.clientId || null;
         }
+
+        // clientId がない場合は socket.id を代わりに使う（古いブラウザ対策）
+        if (!clientId) {
+            clientId = socket.id;
+        }
+
+        // この socket と clientId の対応を保存
+        socketClientIds[socket.id] = clientId;
 
         // 名前が空なら仮名
         const displayName = rawName && rawName.trim()
@@ -218,15 +243,25 @@ io.on("connection", (socket) => {
             color: color
         };
         socket.join(ROOM_NAME);
-        touchActivity(socket.id);   // ★ 入室時にもアクティビティ更新
 
-        console.log(displayName, "joined");
+        console.log(displayName, "joined (clientId:", clientId, ")");
 
-        // システムメッセージ（入室）
-        io.to(ROOM_NAME).emit("system-message", {
-            time: getTimeString(),
-            text: `「${displayName}」さんが入室しました。`
-        });
+        // ★ 入室メッセージを出すかどうか判定
+        const now = Date.now();
+        let shouldAnnounceJoin = true;
+        const lastLeave = lastLeaveByClientId[clientId];
+
+        // 前回の退室時刻があり、そこから10分未満なら「再入室」とみなしてメッセージを出さない
+        if (lastLeave && (now - lastLeave) < AUTO_LEAVE_MS) {
+            shouldAnnounceJoin = false;
+        }
+
+        if (shouldAnnounceJoin) {
+            io.to(ROOM_NAME).emit("system-message", {
+                time: getTimeString(),
+                text: `「${displayName}」さんが入室しました。`
+            });
+        }
 
         // すでにチャットログがあれば、その入室した人にだけまとめて送る
         if (chatLog.length > 0) {
@@ -235,6 +270,9 @@ io.on("connection", (socket) => {
 
         // ユーザー一覧更新
         broadcastUserList();
+
+        // 入室したタイミングも「最後の操作」として記録
+        touchActivity(socket.id);
     });
 
     // 名前変更
@@ -247,7 +285,7 @@ io.on("connection", (socket) => {
         if (!trimmed || trimmed === oldName) return;
 
         user.name = trimmed;
-        touchActivity(socket.id);   // ★ アクティビティ更新
+        touchActivity(socket.id);   // アクティビティ更新
 
         io.to(ROOM_NAME).emit("system-message", {
             time: getTimeString(),
@@ -262,7 +300,7 @@ io.on("connection", (socket) => {
         const user = users[socket.id];
         if (!user) return;
         user.color = newColor || null;
-        touchActivity(socket.id);   // ★ アクティビティ更新
+        touchActivity(socket.id);   // アクティビティ更新
     });
 
     // メッセージ送信
@@ -314,7 +352,7 @@ io.on("connection", (socket) => {
 
         // ここまでOKなら送信を許可
         lastMessageTimes[socket.id] = now;
-        touchActivity(socket.id);   // ★ アクティビティ更新
+        touchActivity(socket.id);   // アクティビティ更新
 
         const time = getTimeString();
 
@@ -349,7 +387,7 @@ io.on("connection", (socket) => {
 
         if (isTyping) {
             typingUsers.add(socket.id);
-            touchActivity(socket.id);   // ★ 入力中も「操作」とみなす
+            touchActivity(socket.id);   // 入力中も「操作」とみなす
         } else {
             typingUsers.delete(socket.id);
         }
@@ -362,12 +400,20 @@ io.on("connection", (socket) => {
         if (!user) return;
 
         const leftName = user.name;
+        const clientId = socketClientIds[socket.id];
 
+        // サーバー側の状態を削除
         delete users[socket.id];
         typingUsers.delete(socket.id);
         delete lastMessageTimes[socket.id];
         delete lastActivityTimes[socket.id];
+        delete socketClientIds[socket.id];
         socket.leave(ROOM_NAME);
+
+        // このクライアントの「最終退室時刻」を記録
+        if (clientId) {
+            lastLeaveByClientId[clientId] = Date.now();
+        }
 
         io.to(ROOM_NAME).emit("system-message", {
             time: getTimeString(),
@@ -390,15 +436,23 @@ io.on("connection", (socket) => {
         const user = users[socket.id];
         if (user) {
             const leftName = user.name;
+            const clientId = socketClientIds[socket.id];
+
             delete users[socket.id];
             typingUsers.delete(socket.id);
             delete lastMessageTimes[socket.id];
             delete lastActivityTimes[socket.id];
+            delete socketClientIds[socket.id];
 
+            // ★ ここでも「最後の退室時刻」を記録しておく
+            if (clientId) {
+                lastLeaveByClientId[clientId] = Date.now();
+            }
+
+            // disconnect では退室メッセージは出さない（静かに枠だけ消える）
             broadcastUserList();
             broadcastTypingUsers();
 
-            // 全員いなくなったらチャットログをクリア
             if (Object.keys(users).length === 0) {
                 chatLog.length = 0;
                 typingUsers.clear();
