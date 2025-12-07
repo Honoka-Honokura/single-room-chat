@@ -70,7 +70,6 @@ const BLOCKED_URL_DOMAINS = [
     "tinyurl.com"
 ];
 
-
 // ★ NGワードチェック用の正規化
 function normalizeForCheck(text) {
     if (!text) return "";
@@ -99,7 +98,6 @@ const NG_WORDS = [
     "sex", "porn" 
 ];
 
-
 // NGワード判定（正規化＋単純リストのみ）
 function containsNgWord(text) {
     const normalized = normalizeForCheck(text);
@@ -107,7 +105,6 @@ function containsNgWord(text) {
     // NG_WORDS の部分一致のみで判定
     return NG_WORDS.some(word => normalized.includes(word));
 }
-
 
 // ===========================
 // 個人情報（メール・電話番号）の検出
@@ -139,8 +136,6 @@ function containsPersonalInfo(text) {
     return false;
 }
 
-
-
 // ===========================
 // 無操作タイマー用
 // ===========================
@@ -162,7 +157,6 @@ function getTimeString() {
         minute: "2-digit"
     });
 }
-
 
 // 全員にオンラインユーザー一覧を送信
 function broadcastUserList() {
@@ -204,8 +198,6 @@ setInterval(() => {
         // clientId ベースの情報も必要ならここで掃除
         const clientId = socketClientIds[socketId];
         if (clientId) {
-            // 連投時刻は残してもいいが、気になるなら消す
-            // delete lastMessageTimeByClientId[clientId];
             delete socketClientIds[socketId];
         }
 
@@ -318,8 +310,6 @@ io.on("connection", (socket) => {
         touchActivity(socket.id);
     });
 
-
-
     // 名前変更
     socket.on("change-name", (newName) => {
         const user = users[socket.id];
@@ -344,8 +334,18 @@ io.on("connection", (socket) => {
     socket.on("change-color", (newColor) => {
         const user = users[socket.id];
         if (!user) return;
-        user.color = newColor || null;
+
+        const color = (newColor || "").toString().trim();
+        if (!color) return;
+
+        user.color = color;
         touchActivity(socket.id);
+
+        // 任意：システムメッセージで他ユーザーに通知
+        io.to(ROOM_NAME).emit("system-message", {
+            time: getTimeString(),
+            text: `「${user.name}」さんが吹き出し色を変更しました。`
+        });
     });
 
     // メッセージ送信
@@ -441,8 +441,6 @@ io.on("connection", (socket) => {
         });
     });
 
-
-
     // 2D6 のダイスを振る
     socket.on("roll-dice", () => {
         const user = users[socket.id];
@@ -482,8 +480,6 @@ io.on("connection", (socket) => {
         });
     });
 
-
-
     // 入力中フラグ
     socket.on("typing", (isTyping) => {
         const user = users[socket.id];
@@ -510,8 +506,6 @@ io.on("connection", (socket) => {
             // 明示的退室なので、再入室時にメッセージを抑制しないよう
             // lastLeaveByClientId は更新しない設計
             delete socketClientIds[socket.id];
-            // 必要なら clientId の連投情報も掃除してよい
-            // delete lastMessageTimeByClientId[clientId];
         }
 
         delete users[socket.id];
@@ -546,8 +540,6 @@ io.on("connection", (socket) => {
         if (clientId) {
             lastLeaveByClientId[clientId] = Date.now();
             delete socketClientIds[socket.id];
-            // 必要ならここで連投情報を消すこともできる
-            // delete lastMessageTimeByClientId[clientId];
         }
 
         if (user) {

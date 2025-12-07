@@ -35,8 +35,6 @@
             </ul>
         </div>
 
-
-
         <div id="chatLog"></div>
 
         <div class="footer">
@@ -46,7 +44,7 @@
                 <button id="joinBtn">入室</button>
             </div>
 
-            <!-- 吹き出しの色を選ぶ行 -->
+            <!-- 吹き出しの色を選ぶ行（入室前の主役・入室後は再利用） -->
             <div class="color-row">
                 <span class="color-label">吹き出し色：</span>
 
@@ -81,13 +79,19 @@
                 <button id="roll2d6Btn" class="dice-btn" disabled>🎲</button>
             </div>
 
-
-
             <!-- 入室後だけ見える小さなコントロール -->
             <div class="after-join-controls">
                 <button id="renameBtn" disabled>名前変更</button>
+                <!-- ★ 吹き出し色変更ボタンを追加 -->
+                <button id="openColorChangeBtn" disabled>色変更</button>
                 <button id="leaveBtn" disabled>退室</button>
             </div>
+
+            <!-- ★ 入室後の色変更UI（初期は非表示） -->
+            <div id="colorChangeArea" style="display: none;">
+                <div id="colorChangeWrapper" class="color-change-row"></div>
+            </div>
+
 
             <div id="typingInfo"></div>
         </div>
@@ -156,12 +160,51 @@
                 .slice(1);
         }
 
+        function applyColorChange() {
+            if (!joined) return;
+
+            const selected = document.querySelector('input[name="bubbleColor"]:checked');
+            const newColor = selected ? selected.value : pendingColor || currentColor;
+
+            if (!newColor) return;
+
+            currentColor   = newColor;
+            lastKnownColor = newColor;
+
+            socket.emit("change-color", newColor);
+
+            closeColorChangeUI();
+        }
+
+
+        function cancelColorChange() {
+            pendingColor = null;
+            closeColorChangeUI();
+        }
+
+        function closeColorChangeUI() {
+            colorChangeArea.style.display = "none";
+
+            // ラジオを footer に戻す（上に戻るが hidden）
+            footer.insertBefore(colorRow, inputRow);
+
+            if (joined) {
+                colorRow.style.display = "none";
+            }
+
+            // UIを空にする
+            colorChangeWrapper.innerHTML = "";
+        }
+
+
+
         /* 要素取得 ------------------------------ */
         const socket            = io();
         const nameInput         = document.getElementById("nameInput");
         const joinBtn           = document.getElementById("joinBtn");
         const renameBtn         = document.getElementById("renameBtn");
         const leaveBtn          = document.getElementById("leaveBtn");
+        const openColorChangeBtn = document.getElementById("openColorChangeBtn");
         const msgInput          = document.getElementById("msgInput");
         const sendBtn           = document.getElementById("sendBtn");
         const chatLog           = document.getElementById("chatLog");
@@ -180,15 +223,23 @@
         const mobileUserList    = document.getElementById("mobileUserList");
         const roll2d6Btn        = document.getElementById("roll2d6Btn"); 
 
+        const footer            = document.querySelector(".footer");
+        const colorRow          = document.querySelector(".color-row");
+        const colorChangeArea   = document.getElementById("colorChangeArea");
+        const colorChangeWrapper = document.getElementById("colorChangeWrapper");
+
 
         // 吹き出し色のラジオボタン
         const colorInputs = document.querySelectorAll('input[name="bubbleColor"]');
 
-        // 現在選択している色（初期値は「checked」されているもの）
+        // 現在選択している色（入室済みの実際の色）
         let currentColor = (() => {
             const checked = document.querySelector('input[name="bubbleColor"]:checked');
             return checked ? checked.value : null;
         })();
+
+        // 色変更ダイアログ内で一時的に選んだ色
+        let pendingColor = null;
 
         // 状態
         let joined          = false;
@@ -199,14 +250,20 @@
         let lastKnownName   = "";            // 最後に使っていた名前
         let lastKnownColor  = currentColor;  // 最後に選んでいた吹き出し色
 
-        /* 吹き出し色変更 ------------------------ */
+        /* 吹き出し色のラジオ操作 ----------------
+           入室前：そのまま currentColor を変える
+           入室後：ダイアログ内で選んだ値として pendingColor に入れておく
+        ---------------------------------------- */
         colorInputs.forEach(input => {
             input.addEventListener("change", () => {
-                currentColor   = input.value;
-                lastKnownColor = currentColor;
-
-                if (joined) {
-                    socket.emit("change-color", currentColor);
+                const val = input.value;
+                if (!joined) {
+                    // 入室前はそのまま現在色に反映
+                    currentColor   = val;
+                    lastKnownColor = currentColor;
+                } else {
+                    // 入室後はダイアログでの一時選択として保持
+                    pendingColor = val;
                 }
             });
         });
@@ -368,7 +425,11 @@
             if (joined) return;
 
             const name  = nameInput.value.trim() || "";
-            const color = currentColor;   // 選択中の色
+
+            // 念のため現在のチェックから色を拾う
+            const checked = document.querySelector('input[name="bubbleColor"]:checked');
+            currentColor = checked ? checked.value : currentColor;
+            const color = currentColor;
 
             // name / color / clientId をまとめて送る
             socket.emit("join", { name, color, clientId });
@@ -385,6 +446,12 @@
             // メッセージ入力ボックスを表示
             inputRow.style.display = "flex";
 
+
+            // 入室したら上の色行を隠す
+            if (colorRow) {
+                colorRow.style.display = "none";
+            }
+
             // 見た目の状態切り替え
             document.body.classList.add("joined");
             joinRow.style.display = "none";
@@ -393,6 +460,7 @@
 
             renameBtn.disabled = false;
             leaveBtn.disabled  = false;
+            openColorChangeBtn.disabled = false;
             afterJoinControls.style.display = "flex";
 
             msgInput.disabled = false;
@@ -451,6 +519,7 @@
 
             renameBtn.disabled = true;
             leaveBtn.disabled  = true;
+            openColorChangeBtn.disabled = true;
             afterJoinControls.style.display = "none";
 
             msgInput.disabled = true;
@@ -470,7 +539,57 @@
             chatLog.innerHTML = "";
             typingInfo.textContent = "";
             statusText.textContent = "未入室";
+
+            // ★ 色変更UIを閉じてパネルを元に戻す
+            pendingColor = null;
+            colorChangeArea.style.display = "none";
+            if (footer && colorRow && inputRow) {
+                footer.insertBefore(colorRow, inputRow);
+                // ★ 未入室に戻ったので、上で見えるようにする
+                colorRow.style.display = "flex";
+            }
+
         });
+
+        /* 吹き出し色変更UI（入室後専用） --------- */
+        openColorChangeBtn.addEventListener("click", () => {
+            if (!joined) return;
+
+            // 現在色を反映
+            const baseColor = currentColor || lastKnownColor;
+            if (baseColor) {
+                colorInputs.forEach(input => {
+                    input.checked = (input.value === baseColor);
+                });
+                pendingColor = baseColor;
+            }
+
+            // color-row を UI に移動
+            colorChangeWrapper.appendChild(colorRow);
+            colorRow.style.display = "flex";
+
+            // ★ 決定 / キャンセルボタンを横並びで追加
+            const applyBtn = document.createElement("button");
+            applyBtn.id = "applyColorChangeBtn";
+            applyBtn.textContent = "決定";
+            applyBtn.classList.add("color-change-btn");
+
+            const cancelBtn = document.createElement("button");
+            cancelBtn.id = "cancelColorChangeBtn";
+            cancelBtn.textContent = "キャンセル";
+            cancelBtn.classList.add("color-change-btn");
+
+            colorChangeWrapper.appendChild(applyBtn);
+            colorChangeWrapper.appendChild(cancelBtn);
+
+            colorChangeArea.style.display = "block";
+
+            // ボタンのイベント設定
+            applyBtn.addEventListener("click", applyColorChange);
+            cancelBtn.addEventListener("click", cancelColorChange);
+        });
+
+
 
         /* メッセージ入力 ------------------------ */
         sendBtn.addEventListener("click", () => {
@@ -488,7 +607,6 @@
                 socket.emit("roll-dice"); // サーバーに「振って」とお願い
             });
         }
-
 
         msgInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
@@ -555,6 +673,7 @@
 
             renameBtn.disabled = true;
             leaveBtn.disabled  = true;
+            openColorChangeBtn.disabled = true;
             afterJoinControls.style.display = "none";
 
             msgInput.disabled = true;
@@ -573,6 +692,16 @@
 
             typingInfo.textContent = "";
             statusText.textContent = "未入室";
+
+            // ★ 色変更UIを閉じてパネルを元に戻す
+            pendingColor = null;
+            colorChangeArea.style.display = "none";
+            if (footer && colorRow && inputRow) {
+                footer.insertBefore(colorRow, inputRow);
+                // ★ 未入室状態なので表示
+                colorRow.style.display = "flex";
+            }
+
 
             alert("10分間操作がなかったため、自動的に退室しました。");
         });
