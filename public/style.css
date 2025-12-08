@@ -610,7 +610,7 @@ body.joined #msgInput {
 
     /* 入力欄をコンパクトに */
     .input-row input#msgInput {
-        font-size: 13px;
+        font-size: 16px;
         padding: 4px 6px;
         height: 32px;
     }
@@ -623,7 +623,7 @@ body.joined #msgInput {
 
     /* 名前入力行も少し詰める */
     .name-row input#nameInput {
-        font-size: 13px;
+        font-size: 16px;
         padding: 4px 6px;
         height: 32px;
     }
@@ -641,7 +641,7 @@ body.joined #msgInput {
     .name-row button#joinBtn {
         box-sizing: border-box;
         height: 36px;            /* ← 好きな高さに（32〜40推奨） */
-        font-size: 13px;
+        font-size: 16px;
         padding: 6px 8px;        /* ← input と button を揃える */
     }
 
