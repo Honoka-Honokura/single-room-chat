@@ -380,21 +380,20 @@
             const div = document.createElement("div");
             div.className = "system-message";
             div.textContent = `[${time}] ${text}`;
-            chatLog.prepend(div);
+            chatLog.append(div);
             trimChatLog();
-            chatLog.scrollTop = 0;
+            chatLog.scrollTop = chatLog.scrollHeight;  // ← 修正
         });
+
 
         // 入室時に送られてくる過去ログ
         socket.on("chat-log", (logs) => {
 
-            // ★ 新しい順にしたいので、logs[0] が最新 → prepend を使う
-            //    → つまり「そのまま先頭から順に描画」すれば OK
-
+            // ★ そのまま順番通りに追加（古い→新しい）
             for (let i = 0; i < logs.length; i++) {
                 const item = logs[i];
 
-                // ▼ お仕置きガチャ（お題ログ）
+                // ▼ ガチャログ
                 if (item.type === "topic") {
                     const wrapper = document.createElement("div");
                     wrapper.className = "system-message topic-message";
@@ -408,7 +407,7 @@
                             ${item.topic}
                         </div>
                     `;
-                    chatLog.prepend(wrapper);
+                    chatLog.append(wrapper);     // ←ここを append に
                     continue;
                 }
 
@@ -432,16 +431,17 @@
                 row.appendChild(meta);
                 row.appendChild(msgDiv);
 
-                chatLog.prepend(row);  // ← 常に上に追加
+                chatLog.append(row);  // ← 最新が下に来る
             }
 
             if (typeof trimChatLog === "function") {
                 trimChatLog();
             }
 
-            // 最新が上なので scrollTop は一番上にしておく
-            chatLog.scrollTop = 0;
+            // 下までスクロール
+            chatLog.scrollTop = chatLog.scrollHeight;
         });
+
 
 
 
@@ -468,9 +468,9 @@
             row.appendChild(meta);
             row.appendChild(msgDiv);
 
-            chatLog.prepend(row);
+            chatLog.append(row);
             trimChatLog();
-            chatLog.scrollTop = 0;
+            chatLog.scrollTop = chatLog.scrollHeight;
         });
 
         // お題ガチャの結果 ------------------------
@@ -488,9 +488,9 @@
                 </div>
             `;
 
-            chatLog.prepend(wrapper);
+            chatLog.append(wrapper);
             trimChatLog();
-            chatLog.scrollTop = 0;
+            chatLog.scrollTop = chatLog.scrollHeight; 
         });
 
 
