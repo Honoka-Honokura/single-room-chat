@@ -1,13 +1,27 @@
-/* 全体レイアウト ------------------------ */
-body {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+/* ================================
+   全体レイアウト共通
+================================ */
+
+/* 画面全体を使うための基本設定 */
+html, body {
+    height: 100%;
     margin: 0;
-    display: flex;
-    height: 100dvh;   /* ← ここを 100vh から 100dvh に変更 */
-    background: #f3f4f6;
+    padding: 0;
 }
 
-
+/* 全体レイアウト ------------------------ */
+body {
+    font-family:
+        "Hiragino Sans",
+        "Hiragino Kaku Gothic ProN",
+        "Hiragino Kaku Gothic Pro",
+        "Noto Sans JP",
+        sans-serif;
+    margin: 0;
+    display: flex;
+    height: 100dvh;
+    background: #f3f4f6;
+}
 
 /* 左：チャットエリア / 右：ユーザー一覧 */
 .chat-wrapper {
@@ -16,16 +30,15 @@ body {
     flex-direction: column;
     border-right: 1px solid #ddd;
     min-width: 0;
-    min-height: 0;        /* ★ 代わりにこれを入れておくとスクロールが素直になります */
+    min-height: 0;
 }
 
 .sidebar {
     width: 220px;
     padding: 8px;
     box-sizing: border-box;
-    overflow-y: auto;   /* ★ 右側も独立してスクロールできるように */
+    overflow-y: auto;
 }
-
 
 .sidebar h3 {
     margin-top: 0;
@@ -37,6 +50,7 @@ body {
     line-height: 1.6;
 }
 
+/* ヘッダー ------------------------------ */
 header {
     padding: 8px 12px;
     border-bottom: 1px solid #ddd;
@@ -69,19 +83,19 @@ header {
     border-bottom: 1px solid #ddd;
 }
 
-/* チャットログエリア -------------------- */
+/* ================================
+   チャットログ
+================================ */
+
 #chatLog {
-    flex: 1;
+    flex: 1;                 /* ヘッダーとフッター以外を全部使う */
     padding: 8px 12px;
     overflow-y: auto;
     font-size: 14px;
     background: #fafafa;
-    display: none;
-    padding-bottom: 120px;  /* ★ 追加：フッターの高さぶん余白をつける */
+    display: none;           /* 入室前は非表示 */
 }
 
-
-/* メッセージ表示 ------------------------ */
 .system-message {
     color: #777;
     font-size: 12px;
@@ -143,7 +157,59 @@ header {
     right: 14px;
 }
 
-/* フッター（入力まわり） ---------------- */
+
+/* お題メッセージ ----------------------------------- */
+.topic-message {
+    margin: 8px 0;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #fef2f2, #fff7ed);
+    border: 1px solid #fecaca;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+}
+
+/* 上部のヘッダー行（ラベル＋メタ情報） */
+.topic-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    font-size: 11px;
+}
+
+/* 🎯 お題ラベル部分（ピル型） */
+.topic-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(248, 113, 113, 0.18);  /* 薄い赤 */
+    color: #b91c1c;
+    font-weight: 600;
+}
+
+/* [時間] 誰が引いたか */
+.topic-meta {
+    font-size: 11px;
+    color: #6b7280;
+    white-space: nowrap;
+}
+
+/* お題本文 */
+.topic-body {
+    margin-top: 2px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #7f1d1d;
+    line-height: 1.5;
+}
+
+/* ================================
+   フッター（入力まわり）
+================================ */
+
 .footer {
     border-top: 1px solid #ddd;
     padding: 8px 12px;
@@ -151,17 +217,59 @@ header {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    flex-shrink: 0;      /* 高さは中身に合わせる */
 }
 
+/* 入室前：名前入力 */
 .name-row {
     display: flex;
     gap: 4px;
     margin-bottom: 4px;
 }
 
+#nameInput {
+    flex: 1;
+}
+
+/* メッセージ入力＆送信ボタン */
+.input-row {
+    display: none; /* 入室前は非表示（入室後に JS で flex に） */
+    gap: 4px;
+}
+
+#msgInput {
+    flex: 1;
+}
+
 input[type="text"] {
     padding: 4px 6px;
     font-size: 13px;
+}
+
+#sendBtn {
+    background: #4b5563;
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+#sendBtn:hover {
+    background: #374151;
+}
+
+#sendBtn:disabled {
+    background: #9ca3af;
+    cursor: default;
+}
+
+#joinBtn,
+#renameBtn {
+    font-size: 13px;
+    padding: 4px 8px;
+    cursor: pointer;
 }
 
 /* 吹き出し色選択 ------------------------ */
@@ -210,19 +318,18 @@ input[type="text"] {
     outline-offset: 1px;
 }
 
-/* ▼ 定型文ボタンの行 */
+/* 定型文ボタンの行 ---------------------- */
 .template-row {
-    display: none;          /* 入室前は非表示 */
+    display: none;          /* 入室前は非表示（入室後に JS で flex に） */
     gap: 8px;
     margin-top: 8px;
 }
 
-/* ▼ 定型文ボタンのスタイル（少し大きめ） */
 .template-btn {
-    background: #6b7280;    /* グレー */
+    background: #6b7280;
     color: white;
     border: none;
-    padding: 10px 14px;     /* ← 大きくて押しやすい */
+    padding: 10px 14px;
     font-size: 14px;
     border-radius: 6px;
     cursor: pointer;
@@ -237,67 +344,64 @@ input[type="text"] {
     cursor: default;
 }
 
-
-#nameInput {
-    flex: 1;
-}
-
-#joinBtn,
-#renameBtn {
-    font-size: 13px;
-    padding: 4px 8px;
-    cursor: pointer;
-}
-
-/* メッセージ入力＆送信ボタン */
-.input-row {
-    display: none; /* 入室前は非表示（入室後に JS で flex に） */
-    gap: 4px;
-}
-
-#msgInput {
-    flex: 1;
-}
-
-#sendBtn {
-    background: #4b5563;
-    color: white;
-    border: none;
+/* ダイスボタン（定型文とほぼ同じ） */
+.dice-btn {
     padding: 8px 12px;
+    border: none;
     border-radius: 6px;
     font-size: 14px;
+    background-color: #6b7280;
+    color: #ffffff;
     cursor: pointer;
 }
 
-#sendBtn:hover {
-    background: #374151;
-}
-
-#sendBtn:disabled {
-    background: #9ca3af;
-    cursor: default;
+.dice-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    color: #fff; 
 }
 
 /* 入室後だけ表示する小さなコントロール */
 .after-join-controls {
     display: none;     /* 入室前は非表示 */
-    margin-top: 10px;
-    justify-content: flex-end;
-    gap: 4px;
+    gap: 6px;
+    justify-content: space-between;
 }
 
 .after-join-controls button {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 4px;
+    white-space: nowrap;
+    font-size: 14px;
     background: #e5e7eb;
     color: #444;
     border: 1px solid #ccc;
-    padding: 3px 8px;
-    font-size: 12px;
     border-radius: 6px;
     cursor: pointer;
 }
 
 .after-join-controls button:hover {
     background: #d4d4d4;
+}
+
+/* 色変更 UI（ラジオ + 決定/キャンセル） */
+.color-change-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.color-change-row label {
+    display: flex;
+    align-items: center;
+}
+
+.color-change-btn {
+    padding: 6px 10px;
+    font-size: 13px;
+    white-space: nowrap;
 }
 
 /* 入室後はメッセージ入力欄を少し強調 */
@@ -312,7 +416,11 @@ body.joined #msgInput {
     min-height: 14px;
 }
 
-/* モバイル用オンライン一覧ボタン（デフォルトは非表示） */
+/* ================================
+   スマホ用オンライン一覧モーダル
+================================ */
+
+/* ヘッダー右のボタン（PCでは非表示） */
 .mobile-user-btn {
     display: none;
     font-size: 12px;
@@ -326,7 +434,7 @@ body.joined #msgInput {
 
 /* オンライン一覧モーダル（スマホ用） */
 .mobile-user-overlay {
-    display: none;              /* JSで表示切り替え */
+    display: none;
     position: fixed;
     inset: 0;
     background: rgba(15, 23, 42, 0.45);
@@ -372,184 +480,224 @@ body.joined #msgInput {
     overflow-y: auto;
 }
 
-/* 利用上の注意（落ち着いたトーン） */
+/* ================================
+   利用上の注意
+================================ */
+
 .chat-notice {
-  background-color: #f7f7f7;    /* 薄いグレーでなじませる */
-  border: 1px solid #dddddd;
-  border-radius: 6px;
-  padding: 8px 10px;
-  margin: 8px 8px 4px;
-  font-size: 12px;
-  line-height: 1.4;
-  color: #444;
+    background-color: #f7f7f7;
+    border: 1px solid #dddddd;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin: 8px 8px 4px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #444;
 }
 
 .chat-notice-title {
-  margin: 0 0 4px;
-  font-weight: bold;
-  font-size: 13px;
-  color: #333;
+    margin: 0 0 4px;
+    font-weight: bold;
+    font-size: 13px;
+    color: #333;
 }
 
 .chat-notice-list {
-  margin: 0;
-  padding-left: 18px;
+    margin: 0;
+    padding-left: 18px;
 }
 
 .chat-notice-list li {
-  margin-bottom: 2px;
+    margin-bottom: 2px;
 }
 
-/* ダイスボタン（定型文と同じサイズ・別色） */
-.dice-btn {
-    padding: 8px 12px;
-    margin-left: 6px;
+/* ================================
+   ハンバーガーメニュー（スマホ）
+================================ */
+
+/* ボタン本体 */
+.mobile-menu-btn {
     border: none;
-    border-radius: 6px;
-    font-size: 14px;
-    background-color: #6b7280;
-    color: #333;
+    background: none;
+    padding: 6px;
+    display: none; /* PCでは非表示 */
     cursor: pointer;
 }
 
-/* 無効化状態（入室前） */
-.dice-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+.mobile-menu-btn span {
+    display: block;
+    width: 20px;
+    height: 2px;
+    margin: 3px 0;
+    background-color: #000; /* ヘッダー背景が白前提で黒に */
+    transition: transform 0.2s ease, opacity 0.2s ease;
 }
 
-/* 入室後コントロールの基本設定（デフォルトは非表示） */
-.after-join-controls {
-    display: none;                 /* ★ 最初は隠す */
-    gap: 6px;
-    justify-content: space-between;
+/* メニュー本体（閉じているときは非表示） */
+.mobile-menu {
+    display: none;
+    position: absolute;
+    top: 56px; /* ヘッダーの高さに合わせて調整 */
+    right: 0;
+    left: 0;
+    background: rgba(0, 0, 0, 0.9);
+    padding: 8px 0;
+    z-index: 1000;
 }
 
-/* ボタン幅を統一してコンパクトにする */
-.after-join-controls button {
-    flex: 1;
-    min-width: 0;
-    padding: 8px 4px;
-    white-space: nowrap;
+.mobile-menu-item {
+    width: 100%;
+    padding: 10px 16px;
+    text-align: left;
+    border: none;
+    background: transparent;
+    color: #fff;
     font-size: 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* ラジオ + 決定 + キャンセルを横並びにする */
-.color-change-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 8px;
+.mobile-menu-item:last-child {
+    border-bottom: none;
 }
 
-/* ラジオボタンの label を横並び小さめに */
-.color-change-row label {
-    display: flex;
-    align-items: center;
+.mobile-menu-leave {
+    color: #ff7676;
 }
 
-/* 決定キャンセルボタンの調整 */
-.color-change-btn {
-    padding: 6px 10px;
-    font-size: 13px;
-    white-space: nowrap;
+/* メニューが開いているとき用のクラス */
+.mobile-menu.open {
+    display: block;
 }
 
+.mobile-menu-btn.open span:nth-child(1) {
+    transform: translateY(5px) rotate(45deg);
+}
+.mobile-menu-btn.open span:nth-child(2) {
+    opacity: 0;
+}
+.mobile-menu-btn.open span:nth-child(3) {
+    transform: translateY(-5px) rotate(-45deg);
+}
 
-/* スマホ向けレイアウト ------------------ */
+/* ================================
+   スマホ向けレイアウト
+================================ */
+
 @media (max-width: 768px) {
 
+    /* 縦並びレイアウトに変更（サイドバーを下ではなく消す） */
     body {
         flex-direction: column;
-    }
-
-    .footer {
-        padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));  /* ★ 追加 */
-    }
-
-    #chatLog {
-        padding-bottom: 140px;  /* ★ スマホでは少し多めに */
-    }
-
-    /* ▼ 入力欄をタップしてもズームされないようにする */
-    input[type="text"],
-    #msgInput,
-    #nameInput,
-    button {
-        font-size: 16px !important; 
-    }
-
-    #sendBtn {
-        padding: 12px 14px;
-        font-size: 16px;
-    }
-
-    #msgInput {
-        padding: 12px 14px;
-        font-size: 17px;
-    }
-
-    .after-join-controls {
-        margin-top: 14px;
     }
 
     .chat-wrapper {
         border-right: none;
         border-bottom: 1px solid #ddd;
         width: 100%;
-        min-height: 0;     /* ★ 念のため追加 */
+        min-height: 0;
     }
 
-
+    /* サイドバーは非表示（オンラインはモーダルで見る） */
     .sidebar {
-        width: 100%;
-        padding: 8px 10px;
-        border: none;
-        background: #ffffff;
-        box-sizing: border-box;
+        display: none;
     }
 
-    .sidebar h3 {
-        font-size: 13px;
-        margin-bottom: 4px;
-    }
-
-    #chatLog {
-        padding: 6px 8px;
-        font-size: 13px;
-        padding-bottom: 140px;
-    }
-
+    /* フッターをスリムに */
     .footer {
         padding: 6px 8px;
         gap: 4px;
     }
 
-    .name-row,
-    .input-row {
-        flex-direction: column;
-        align-items: stretch;
+    /* 入力欄をコンパクトに */
+    .input-row input#msgInput {
+        font-size: 13px;
+        padding: 4px 6px;
+        height: 32px;
     }
 
-    #nameInput,
-    #msgInput,
-    input[type="text"] {
-        width: 100%;
+    .input-row button#sendBtn {
+        padding: 4px 8px;
+        font-size: 13px;
+        height: 32px;
+    }
+
+    /* 名前入力行も少し詰める */
+    .name-row input#nameInput {
+        font-size: 13px;
+        padding: 4px 6px;
+        height: 32px;
+    }
+
+    .name-row button#joinBtn {
+        padding: 4px 8px;
+        font-size: 13px;
+        height: 32px;
+    }
+
+    /* 入力欄・送信・入室ボタンを統一した高さにする */
+    .input-row input#msgInput,
+    .input-row button#sendBtn,
+    .name-row input#nameInput,
+    .name-row button#joinBtn {
         box-sizing: border-box;
-        font-size: 14px;
+        height: 36px;            /* ← 好きな高さに（32〜40推奨） */
+        font-size: 13px;
+        padding: 6px 8px;        /* ← input と button を揃える */
     }
 
-    .color-row {
-        flex-wrap: wrap;
-        font-size: 12px;
-    }
-
-    #joinBtn,
-    #renameBtn,
-    #leaveBtn {
+    /* 名前入力欄の全幅を維持 */
+    #nameInput,
+    #msgInput {
         width: 100%;
-        font-size: 14px;
-        padding: 6px 0;
+    }
+
+    /* after-join-controls（名前変更／色変更／退室）は
+       スマホでは非表示にしてヘッダーメニューへ集約 */
+    .after-join-controls {
+        display: none !important;
+    }
+
+    /* 高さは送信ボタンと揃える（36px） */
+    .template-row .template-btn,
+    .template-row .dice-btn {
+        height: 36px;
+        padding: 0 8px;
+        font-size: 13px;
+        border-radius: 6px;
+        box-sizing: border-box;
+    }
+
+    /* ボタン間の余白はすべて均等に */
+    .template-row {
+        gap: 4px;
+    }
+
+    /* 吹き出し色行も少し詰める（入室前のみ表示想定） */
+    .color-row {
+        gap: 4px;
+        font-size: 11px;
+    }
+    .color-label {
+        font-size: 11px;
+    }
+
+    /* ハンバーガーメニューを表示 */
+    .mobile-menu-btn {
+        display: inline-flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+
+    /* 旧モバイル用オンラインボタンは使わない */
+    .mobile-user-btn {
+        display: none;
+    }
+
+    /* スマホではチャットログの文字を少しだけ小さめに */
+    #chatLog {
+        padding: 6px 8px;
+        font-size: 13px;
     }
 
     .message {
@@ -561,40 +709,10 @@ body.joined #msgInput {
         font-size: 11px;
     }
 
-        /* 定型文ボタンの行を横並び・2等分に */
-    .template-row {
-        width: 100%;
-        gap: 8px;
+    .topic-message {
+        padding: 6px 8px;
     }
-
-    /* スマホではボタンを横いっぱいに広げる */
-    .template-btn {
-        flex: 1;                /* ← 幅を均等に伸ばす */
-        padding: 10px 0;        /* ← 指で押しやすく */
-        font-size: 16px;
-        text-align: center;
-    }
-
-    /* サイドバーはスマホでは非表示にする */
-    .sidebar {
-        display: none;
-    }
-
-    /* スマホのときだけ「オンライン一覧」ボタンを表示 */
-    .mobile-user-btn {
-        display: inline-block;
-    }
-
-    /* チャットエリアは横幅いっぱい使う */
-    .chat-wrapper {
-        border-right: none;
-        border-bottom: 1px solid #ddd;
-        width: 100%;
-        height: 100vh;   /* ← ここ前回追加したやつそのままでOK */
-    }
-
-    .after-join-controls button {
-        padding: 6px 3px;
+    .topic-body {
         font-size: 13px;
     }
 

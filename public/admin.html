@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>お題ガチャ 管理画面</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+      margin: 16px;
+      background: #f3f4f6;
+    }
+    h1 {
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+    .card {
+      background: #ffffff;
+      border-radius: 8px;
+      padding: 12px 14px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+      margin-bottom: 16px;
+    }
+    label {
+      font-size: 13px;
+      display: block;
+      margin-bottom: 4px;
+    }
+    input[type="password"],
+    input[type="text"],
+    input[type="number"],
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px 8px;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+    button {
+      padding: 6px 10px;
+      font-size: 13px;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+      background: #e5e7eb;
+      cursor: pointer;
+    }
+    button.primary {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #ffffff;
+    }
+    button.danger {
+      background: #dc2626;
+      border-color: #b91c1c;
+      color: #ffffff;
+    }
+    button + button {
+      margin-left: 6px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+    th, td {
+      border: 1px solid #e5e7eb;
+      padding: 6px 8px;
+      vertical-align: top;
+    }
+    th {
+      background: #f9fafb;
+      white-space: nowrap;
+    }
+    td.text-cell {
+      width: 100%;
+    }
+    .id-cell {
+      width: 40px;
+      text-align: right;
+    }
+    .weight-cell {
+      width: 60px;
+      text-align: right;
+    }
+    .actions-cell {
+      white-space: nowrap;
+      width: 120px;
+      text-align: center;
+    }
+    .status {
+      font-size: 12px;
+      color: #4b5563;
+      margin-top: 4px;
+      min-height: 16px;
+    }
+    .status.error {
+      color: #b91c1c;
+    }
+  </style>
+</head>
+<body>
+  <h1>お題ガチャ 管理画面</h1>
+
+  <div class="card">
+    <label for="adminPassword">管理パスワード</label>
+    <input type="password" id="adminPassword" placeholder="server.js の ADMIN_PASSWORD と同じ値" />
+    <button id="loadBtn" class="primary">現在のお題を読み込む</button>
+    <div id="statusText" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:16px;margin:0 0 8px;">お題の追加</h2>
+    <label for="newTopicText">お題テキスト</label>
+    <textarea id="newTopicText" rows="3" placeholder="ここに新しいお題を入力"></textarea>
+
+    <label for="newTopicWeight">重み（出やすさ）※1以上の数字</label>
+    <input type="number" id="newTopicWeight" value="1" min="1" step="1" />
+
+    <button id="addBtn" class="primary">このお題を追加</button>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:16px;margin:0 0 8px;">現在登録されているお題</h2>
+    <table>
+      <thead>
+        <tr>
+          <th class="id-cell">ID</th>
+          <th class="text-cell">お題テキスト</th>
+          <th class="weight-cell">重み</th>
+          <th class="actions-cell">操作</th>
+        </tr>
+      </thead>
+      <tbody id="topicsBody">
+        <!-- JSで埋める -->
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    const adminPasswordInput = document.getElementById("adminPassword");
+    const loadBtn            = document.getElementById("loadBtn");
+    const addBtn             = document.getElementById("addBtn");
+    const statusText         = document.getElementById("statusText");
+    const topicsBody         = document.getElementById("topicsBody");
+    const newTopicText       = document.getElementById("newTopicText");
+    const newTopicWeight     = document.getElementById("newTopicWeight");
+
+    // 最新の一覧を保持しておく（編集時に使う）
+    let currentTopics = [];
+
+    function setStatus(message, isError = false) {
+      statusText.textContent = message || "";
+      statusText.classList.toggle("error", !!isError);
+    }
+
+    // 一覧を描画
+    function renderTopics(list) {
+      currentTopics = Array.isArray(list) ? list : [];
+      topicsBody.innerHTML = "";
+
+      if (currentTopics.length === 0) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 4;
+        td.textContent = "まだお題がありません。";
+        td.style.textAlign = "center";
+        td.style.color = "#6b7280";
+        tr.appendChild(td);
+        topicsBody.appendChild(tr);
+        return;
+      }
+
+      currentTopics.forEach(topic => {
+        const tr = document.createElement("tr");
+
+        const tdId = document.createElement("td");
+        tdId.className = "id-cell";
+        tdId.textContent = topic.id;
+
+        const tdText = document.createElement("td");
+        tdText.className = "text-cell";
+        tdText.textContent = topic.text;
+
+        const tdWeight = document.createElement("td");
+        tdWeight.className = "weight-cell";
+        tdWeight.textContent = topic.weight;
+
+        const tdActions = document.createElement("td");
+        tdActions.className = "actions-cell";
+
+        const editBtn = document.createElement("button");
+        editBtn.textContent = "編集";
+        editBtn.onclick = () => editTopic(topic.id);
+
+        const delBtn = document.createElement("button");
+        delBtn.textContent = "削除";
+        delBtn.className = "danger";
+        delBtn.onclick = () => deleteTopic(topic.id);
+
+        tdActions.appendChild(editBtn);
+        tdActions.appendChild(delBtn);
+
+        tr.appendChild(tdId);
+        tr.appendChild(tdText);
+        tr.appendChild(tdWeight);
+        tr.appendChild(tdActions);
+
+        topicsBody.appendChild(tr);
+      });
+    }
+
+    // 一覧読み込み
+    async function loadTopics() {
+      const password = adminPasswordInput.value.trim();
+      if (!password) {
+        setStatus("管理パスワードを入力してください。", true);
+        return;
+      }
+      try {
+        setStatus("読み込み中…");
+        const res = await fetch(`/api/topics?password=${encodeURIComponent(password)}`);
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || "読み込みに失敗しました。");
+        }
+        const list = await res.json();
+        renderTopics(list);
+        setStatus(`お題を ${list.length} 件読み込みました。`);
+      } catch (err) {
+        console.error(err);
+        setStatus(err.message || "読み込み中にエラーが発生しました。", true);
+      }
+    }
+
+    // 追加
+    async function addTopicFromForm() {
+      const password = adminPasswordInput.value.trim();
+      if (!password) {
+        setStatus("管理パスワードを入力してください。", true);
+        return;
+      }
+      const text = newTopicText.value.trim();
+      const weightVal = Number(newTopicWeight.value || "1");
+      if (!text) {
+        setStatus("お題テキストを入力してください。", true);
+        return;
+      }
+
+      try {
+        setStatus("追加中…");
+        const res = await fetch("/api/topics", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            password,
+            text,
+            weight: weightVal
+          })
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || "追加に失敗しました。");
+        }
+        await res.json();
+        setStatus("お題を追加しました。");
+
+        // フォームを軽くリセットして再読み込み
+        newTopicText.value = "";
+        newTopicWeight.value = "1";
+        loadTopics();
+      } catch (err) {
+        console.error(err);
+        setStatus(err.message || "追加中にエラーが発生しました。", true);
+      }
+    }
+
+    // 編集
+    async function editTopic(id) {
+      const password = adminPasswordInput.value.trim();
+      if (!password) {
+        setStatus("管理パスワードを入力してください。", true);
+        return;
+      }
+
+      const target = currentTopics.find(t => t.id === id);
+      if (!target) {
+        setStatus("対象のお題が見つかりませんでした。", true);
+        return;
+      }
+
+      const newText = window.prompt("お題テキストを編集してください：", target.text);
+      if (newText === null) {
+        return; // キャンセル
+      }
+
+      const newWeightStr = window.prompt("重み（出やすさ）を数字で指定してください：", String(target.weight));
+      if (newWeightStr === null) {
+        return;
+      }
+      const newWeight = Number(newWeightStr);
+      if (!Number.isFinite(newWeight) || newWeight <= 0) {
+        setStatus("重みは1以上の数字で指定してください。", true);
+        return;
+      }
+
+      try {
+        setStatus("更新中…");
+        const res = await fetch(`/api/topics/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            password,
+            text: newText,
+            weight: newWeight
+          })
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || "更新に失敗しました。");
+        }
+        await res.json();
+        setStatus("お題を更新しました。");
+        loadTopics();
+      } catch (err) {
+        console.error(err);
+        setStatus(err.message || "更新中にエラーが発生しました。", true);
+      }
+    }
+
+    // 削除
+    async function deleteTopic(id) {
+      const password = adminPasswordInput.value.trim();
+      if (!password) {
+        setStatus("管理パスワードを入力してください。", true);
+        return;
+      }
+
+      const target = currentTopics.find(t => t.id === id);
+      const label = target ? `ID:${id}「${target.text.slice(0, 20)}…」` : `ID:${id}`;
+      const ok = window.confirm(`${label} を削除しますか？`);
+      if (!ok) return;
+
+      try {
+        setStatus("削除中…");
+        const res = await fetch(`/api/topics/${id}?password=${encodeURIComponent(password)}`, {
+          method: "DELETE"
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || "削除に失敗しました。");
+        }
+        await res.json();
+        setStatus("お題を削除しました。");
+        loadTopics();
+      } catch (err) {
+        console.error(err);
+        setStatus(err.message || "削除中にエラーが発生しました。", true);
+      }
+    }
+
+    // イベント割り当て
+    loadBtn.addEventListener("click", loadTopics);
+    addBtn.addEventListener("click", addTopicFromForm);
+
+    // ちょっと便利：Enterで読み込み
+    adminPasswordInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        loadTopics();
+      }
+    });
+
+    // グローバルに公開（デバッグ用）
+    window.editTopic = editTopic;
+    window.deleteTopic = deleteTopic;
+  </script>
+</body>
+</html>

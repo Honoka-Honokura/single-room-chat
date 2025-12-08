@@ -14,10 +14,24 @@
 
             <div class="header-right">
                 <div id="statusText">未入室</div>
-                <!-- ★ スマホ用：オンライン一覧ボタン -->
-                <button id="mobileUserBtn" class="mobile-user-btn">オンライン一覧</button>
+
+                <!-- ★ スマホ用：ハンバーガーメニュー -->
+                <button id="mobileMenuBtn" class="mobile-menu-btn" aria-expanded="false">
+                    <!-- シンプルな三本線 -->
+                    <span></span><span></span><span></span>
+                </button>
             </div>
         </header>
+
+        <!-- ★ スマホ用：ハンバーガーメニューの中身 -->
+        <nav id="mobileMenu" class="mobile-menu">
+            <button id="mobileMenuUserListBtn" class="mobile-menu-item">オンライン一覧</button>
+            <button id="mobileMenuChangeNameBtn" class="mobile-menu-item">名前変更</button>
+            <button id="mobileMenuColorBtn" class="mobile-menu-item">色変更</button>
+            <button id="mobileMenuLeaveBtn" class="mobile-menu-item mobile-menu-leave">退室</button>
+        </nav>
+
+
 
         <div id="chatInfoBeforeJoin">
             ※ 入室すると、この下にチャットが表示されます。
@@ -74,9 +88,11 @@
 
             <!-- 定型文ボタン・ダイスボタン（入室後に使う） -->
             <div class="template-row">
-                <button class="template-btn" data-text="逝きそうです♡" disabled>逝きそうです♡</button>
-                <button class="template-btn" data-text="逝きました♡" disabled>逝きました♡</button>
+                <button class="template-btn" data-text="逝きそうです…♡" disabled>寸止め</button>
+                <button class="template-btn" data-text="逝きました…♡" disabled>絶頂</button>
                 <button id="roll2d6Btn" class="dice-btn" disabled>🎲</button>
+                <button id="topicRouletteBtn" class="dice-btn" disabled>お仕置きガチャ</button>
+
             </div>
 
             <!-- 入室後だけ見える小さなコントロール -->
@@ -222,12 +238,68 @@
         const mobileUserClose   = document.getElementById("mobileUserClose");
         const mobileUserList    = document.getElementById("mobileUserList");
         const roll2d6Btn        = document.getElementById("roll2d6Btn"); 
-
+        const topicRouletteBtn  = document.getElementById("topicRouletteBtn");
+        const mobileMenuBtn        = document.getElementById("mobileMenuBtn");
+        const mobileMenu           = document.getElementById("mobileMenu");
+        const mobileMenuUserListBtn    = document.getElementById("mobileMenuUserListBtn");
+        const mobileMenuChangeNameBtn  = document.getElementById("mobileMenuChangeNameBtn");
+        const mobileMenuLeaveBtn       = document.getElementById("mobileMenuLeaveBtn");
+        const mobileMenuColorBtn       = document.getElementById("mobileMenuColorBtn");
         const footer            = document.querySelector(".footer");
         const colorRow          = document.querySelector(".color-row");
         const colorChangeArea   = document.getElementById("colorChangeArea");
         const colorChangeWrapper = document.getElementById("colorChangeWrapper");
 
+        // -----------------------------
+        // ハンバーガーメニュー 開閉
+        // -----------------------------
+        function closeMobileMenu() {
+            if (mobileMenu && mobileMenuBtn) {
+                mobileMenu.classList.remove("open");
+                mobileMenuBtn.classList.remove("open");
+                mobileMenuBtn.setAttribute("aria-expanded", "false");
+            }
+        }
+
+        if (mobileMenuBtn && mobileMenu) {
+            mobileMenuBtn.addEventListener("click", () => {
+                const isOpen = mobileMenu.classList.toggle("open");
+                mobileMenuBtn.classList.toggle("open", isOpen);
+                mobileMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+            });
+        }
+
+        // 「オンライン一覧」 → スマホ用オーバーレイを開く
+        if (mobileMenuUserListBtn && mobileUserOverlay) {
+            mobileMenuUserListBtn.addEventListener("click", () => {
+                mobileUserOverlay.style.display = "flex";
+                closeMobileMenu();
+            });
+        }
+
+        // 「名前変更」 → footer の renameBtn をそのまま呼び出す
+        if (mobileMenuChangeNameBtn && renameBtn) {
+            mobileMenuChangeNameBtn.addEventListener("click", () => {
+                renameBtn.click();
+                closeMobileMenu();
+            });
+        }
+
+        // 「色変更」 → footer の openColorChangeBtn を呼び出す
+        if (mobileMenuColorBtn && openColorChangeBtn) {
+            mobileMenuColorBtn.addEventListener("click", () => {
+                openColorChangeBtn.click();  // 既存の色変更UIを起動
+                closeMobileMenu();
+            });
+        }
+
+        // 「退室」 → footer の leaveBtn をそのまま呼び出す
+        if (mobileMenuLeaveBtn && leaveBtn) {
+            mobileMenuLeaveBtn.addEventListener("click", () => {
+                leaveBtn.click();
+                closeMobileMenu();
+            });
+        }
 
         // 吹き出し色のラジオボタン
         const colorInputs = document.querySelectorAll('input[name="bubbleColor"]');
@@ -315,33 +387,63 @@
 
         // 入室時に送られてくる過去ログ
         socket.on("chat-log", (logs) => {
-            logs.forEach(({ time, name, text, color }) => {
+
+            // ★ 新しい順にしたいので、logs[0] が最新 → prepend を使う
+            //    → つまり「そのまま先頭から順に描画」すれば OK
+
+            for (let i = 0; i < logs.length; i++) {
+                const item = logs[i];
+
+                // ▼ お仕置きガチャ（お題ログ）
+                if (item.type === "topic") {
+                    const wrapper = document.createElement("div");
+                    wrapper.className = "system-message topic-message";
+
+                    wrapper.innerHTML = `
+                        <div class="topic-header">
+                            <span class="topic-label">お仕置きガチャ</span>
+                            <span class="topic-meta">[${item.time}] ${item.name}さんが引きました</span>
+                        </div>
+                        <div class="topic-body">
+                            ${item.topic}
+                        </div>
+                    `;
+                    chatLog.prepend(wrapper);
+                    continue;
+                }
+
+                // ▼ 通常メッセージ
                 const row = document.createElement("div");
                 row.className = "message-row other";
 
                 const meta = document.createElement("div");
                 meta.className = "message-meta";
-                meta.textContent = `[${time}] ${name}`;
+                meta.textContent = `[${item.time}] ${item.name}`;
 
                 const msgDiv = document.createElement("div");
                 msgDiv.className = "message message-other";
-                msgDiv.textContent = text;
+                msgDiv.textContent = item.text;
 
-                // color が来ていればそれを使い、無ければ従来どおり name から決める
-                const userColor = color || getColorForName(name);
-                msgDiv.style.setProperty("--bubble-color", userColor);
+                const userColor = item.color || getColorForName(item.name);
                 msgDiv.style.backgroundColor = userColor;
+                msgDiv.style.setProperty("--bubble-color", userColor);
                 meta.style.color = darkenColor(userColor, 0.35);
 
                 row.appendChild(meta);
                 row.appendChild(msgDiv);
 
-                chatLog.prepend(row);
-            });
+                chatLog.prepend(row);  // ← 常に上に追加
+            }
 
-            trimChatLog();
+            if (typeof trimChatLog === "function") {
+                trimChatLog();
+            }
+
+            // 最新が上なので scrollTop は一番上にしておく
             chatLog.scrollTop = 0;
         });
+
+
 
         // 通常メッセージ
         socket.on("chat-message", ({ time, name, text, fromId, color }) => {
@@ -370,6 +472,27 @@
             trimChatLog();
             chatLog.scrollTop = 0;
         });
+
+        // お題ガチャの結果 ------------------------
+        socket.on("topic-result", ({ time, topic, drawnBy }) => {
+            const wrapper = document.createElement("div");
+            wrapper.className = "system-message topic-message";
+
+            wrapper.innerHTML = `
+                <div class="topic-header">
+                    <span class="topic-label">お仕置きガチャ</span>
+                    <span class="topic-meta">[${time}] ${drawnBy}さんが引きました</span>
+                </div>
+                <div class="topic-body">
+                    ${topic}   <!-- ← ここは .text とかにしないでOK -->
+                </div>
+            `;
+
+            chatLog.prepend(wrapper);
+            trimChatLog();
+            chatLog.scrollTop = 0;
+        });
+
 
         // 連投しすぎの警告（サーバー側で rate-limit を emit している場合用）
         socket.on("rate-limit", ({ waitMs }) => {
@@ -469,6 +592,9 @@
             // ダイスボタンも有効化
             if (roll2d6Btn) roll2d6Btn.disabled = false;
 
+            // ★ お題ガチャボタンも無効化
+            if (topicRouletteBtn) topicRouletteBtn.disabled = false;
+
             // 定型文ボタンを入室後に有効化して表示
             document.querySelector(".template-row").style.display = "flex";
             templateButtons.forEach(btn => btn.disabled = false);
@@ -527,6 +653,10 @@
 
             // ダイスボタンも無効化
             if (roll2d6Btn) roll2d6Btn.disabled = true;
+
+            // ★ お題ガチャボタンも無効化
+            if (topicRouletteBtn) topicRouletteBtn.disabled = true;
+
 
             // 退室時：定型文ボタンを無効化＋非表示
             document.querySelector(".template-row").style.display = "none";
@@ -608,6 +738,15 @@
             });
         }
 
+        // お題ガチャボタン ------------------------
+        if (topicRouletteBtn) {
+            topicRouletteBtn.addEventListener("click", () => {
+                if (!joined) return;  // 未入室では使えない
+                socket.emit("draw-topic");
+            });
+        }
+
+
         msgInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
                 sendBtn.click();
@@ -684,6 +823,9 @@
 
             // ダイスボタンも無効化
             if (roll2d6Btn) roll2d6Btn.disabled = true; 
+
+            // ★ お題ガチャボタンも無効化
+            if (topicRouletteBtn) topicRouletteBtn.disabled = true;
 
             if (infoBeforeJoin) infoBeforeJoin.style.display = "block";
             if (preLoginNotice) preLoginNotice.style.display = "block";
