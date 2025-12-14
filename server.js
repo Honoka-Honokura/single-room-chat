@@ -23,6 +23,14 @@ const {
 // ★ お題ガチャ専用クールダウン（ミリ秒）
 const TOPIC_COOLDOWN_MS = 5000;  // 5秒
 
+// キャッシュ対策
+app.use((req, res, next) => {
+  if (req.path.endsWith(".js") || req.path.endsWith(".css")) {
+    res.setHeader("Cache-Control", "no-store");
+  }
+  next();
+});
+
 // public フォルダを静的配信
 app.use(express.static("public"));
 // JSONボディを受け取るため
