@@ -74,6 +74,8 @@
     }
     td.text-cell {
       width: 100%;
+      white-space: pre-wrap;   /* ★ 改行をそのまま表示 */
+      word-break: break-word;  /* ★ 長文折り返し */
     }
     .id-cell {
       width: 40px;
@@ -97,6 +99,30 @@
     .status.error {
       color: #b91c1c;
     }
+
+    /* ★ dialogの見た目 */
+    dialog::backdrop {
+      background: rgba(0,0,0,.25);
+    }
+    #editDialog {
+      border: none;
+      border-radius: 10px;
+      max-width: 560px;
+      width: 92vw;
+      padding: 0;
+    }
+    .dialog-inner {
+      padding: 14px 14px 10px;
+      background: #fff;
+      box-shadow: 0 10px 30px rgba(0,0,0,.12);
+      border-radius: 10px;
+    }
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 10px;
+    }
   </style>
 </head>
 <body>
@@ -112,7 +138,7 @@
   <div class="card">
     <h2 style="font-size:16px;margin:0 0 8px;">お題の追加</h2>
     <label for="newTopicText">お題テキスト</label>
-    <textarea id="newTopicText" rows="3" placeholder="ここに新しいお題を入力"></textarea>
+    <textarea id="newTopicText" rows="3" placeholder="ここに新しいお題を入力（改行OK）"></textarea>
 
     <label for="newTopicWeight">重み（出やすさ）※1以上の数字</label>
     <input type="number" id="newTopicWeight" value="1" min="1" step="1" />
@@ -137,6 +163,26 @@
     </table>
   </div>
 
+  <!-- ★ 編集モーダル（prompt廃止） -->
+  <dialog id="editDialog">
+    <div class="dialog-inner">
+      <h3 style="margin:0 0 10px;font-size:16px;">お題の編集（改行OK）</h3>
+
+      <label for="editTopicText">お題テキスト</label>
+      <textarea id="editTopicText" rows="7"></textarea>
+
+      <label for="editTopicWeight">重み（1以上）</label>
+      <input type="number" id="editTopicWeight" min="1" step="1" />
+
+      <div class="dialog-actions">
+        <button id="editCancelBtn">キャンセル</button>
+        <button id="editSaveBtn" class="primary">保存</button>
+      </div>
+
+      <div id="editStatus" class="status"></div>
+    </div>
+  </dialog>
+
   <script>
     const adminPasswordInput = document.getElementById("adminPassword");
     const loadBtn            = document.getElementById("loadBtn");
@@ -146,12 +192,26 @@
     const newTopicText       = document.getElementById("newTopicText");
     const newTopicWeight     = document.getElementById("newTopicWeight");
 
+    // ★ モーダル
+    const editDialog         = document.getElementById("editDialog");
+    const editTopicText      = document.getElementById("editTopicText");
+    const editTopicWeight    = document.getElementById("editTopicWeight");
+    const editCancelBtn      = document.getElementById("editCancelBtn");
+    const editSaveBtn        = document.getElementById("editSaveBtn");
+    const editStatus         = document.getElementById("editStatus");
+
+    let editingId = null;
+
     // 最新の一覧を保持しておく（編集時に使う）
     let currentTopics = [];
 
     function setStatus(message, isError = false) {
       statusText.textContent = message || "";
       statusText.classList.toggle("error", !!isError);
+    }
+    function setEditStatus(message, isError = false) {
+      editStatus.textContent = message || "";
+      editStatus.classList.toggle("error", !!isError);
     }
 
     // 一覧を描画
@@ -180,7 +240,7 @@
 
         const tdText = document.createElement("td");
         tdText.className = "text-cell";
-        tdText.textContent = topic.text;
+        tdText.textContent = topic.text; // CSS pre-wrapで改行表示
 
         const tdWeight = document.createElement("td");
         tdWeight.className = "weight-cell";
@@ -265,7 +325,6 @@
         await res.json();
         setStatus("お題を追加しました。");
 
-        // フォームを軽くリセットして再読み込み
         newTopicText.value = "";
         newTopicWeight.value = "1";
         loadTopics();
@@ -275,7 +334,7 @@
       }
     }
 
-    // 編集
+    // ★ 編集（prompt廃止→dialog）
     async function editTopic(id) {
       const password = adminPasswordInput.value.trim();
       if (!password) {
@@ -289,24 +348,40 @@
         return;
       }
 
-      const newText = window.prompt("お題テキストを編集してください：", target.text);
-      if (newText === null) {
-        return; // キャンセル
-      }
+      editingId = id;
+      editTopicText.value = target.text || "";
+      editTopicWeight.value = String(target.weight ?? 1);
+      setEditStatus("");
+      editDialog.showModal();
+      editTopicText.focus();
+    }
 
-      const newWeightStr = window.prompt("重み（出やすさ）を数字で指定してください：", String(target.weight));
-      if (newWeightStr === null) {
+    editCancelBtn.addEventListener("click", () => {
+      editDialog.close();
+    });
+
+    editSaveBtn.addEventListener("click", async () => {
+      const password = adminPasswordInput.value.trim();
+      if (!password) {
+        setEditStatus("管理パスワードを入力してください。", true);
         return;
       }
-      const newWeight = Number(newWeightStr);
+      const newText = editTopicText.value.trim();
+      const newWeight = Number(editTopicWeight.value || "1");
+
+      if (!editingId) return;
+      if (!newText) {
+        setEditStatus("お題テキストを入力してください。", true);
+        return;
+      }
       if (!Number.isFinite(newWeight) || newWeight <= 0) {
-        setStatus("重みは1以上の数字で指定してください。", true);
+        setEditStatus("重みは1以上の数字で指定してください。", true);
         return;
       }
 
       try {
-        setStatus("更新中…");
-        const res = await fetch(`/api/topics/${id}`, {
+        setEditStatus("更新中…");
+        const res = await fetch(`/api/topics/${editingId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -320,13 +395,14 @@
           throw new Error(data.error || "更新に失敗しました。");
         }
         await res.json();
+        editDialog.close();
         setStatus("お題を更新しました。");
         loadTopics();
       } catch (err) {
         console.error(err);
-        setStatus(err.message || "更新中にエラーが発生しました。", true);
+        setEditStatus(err.message || "更新中にエラーが発生しました。", true);
       }
-    }
+    });
 
     // 削除
     async function deleteTopic(id) {
