@@ -57,7 +57,17 @@ function darkenColor(hex, amount = 0.35) {
 }
 
 /* 要素取得 ------------------------------ */
-const socket = io();
+const socket = io({
+  transports: ["websocket", "polling"],
+  timeout: 20000,
+
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 800,
+  reconnectionDelayMax: 5000,
+  randomizationFactor: 0.3
+});
+
 
 const nameInput = document.getElementById("nameInput");
 const joinBtn = document.getElementById("joinBtn");
@@ -741,15 +751,39 @@ if (topicRouletteBtn) {
 
 /* ====== ルブル寄りの「復帰強化」 ====== */
 // タブ復帰で強制同期（iOS対策）
-document.addEventListener("visibilitychange", async () => {
-  if (document.visibilityState === "visible") {
+async function forceResync(reason = "") {
+  // joined中だけ重い同期をする
+  if (joined) {
     try { await syncFullLog(); } catch {}
+  }
+  // socketが死んでたら再接続を促す
+  if (!socket.connected) {
+    try { socket.connect(); } catch {}
+  }
+}
 
-    if (!socket.connected) {
-      try { socket.connect(); } catch {}
-    }
+// ✅ タブ復帰（iOS対策）
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    forceResync("visible");
   }
 });
+
+// ✅ iOSの bfcache 復帰で止まる対策（これが重要）
+window.addEventListener("pageshow", (e) => {
+  if (e.persisted) {
+    forceResync("pageshow(bfcache)");
+  }
+});
+
+// ✅ 回線復帰で確実に同期
+window.addEventListener("online", () => {
+  forceResync("online");
+});
+
+// pollは常時起動（入室してない時は待つので負荷は小）
+startPollLoop();
+
 
 // pollは常時起動（入室してない時は待つので負荷は小）
 startPollLoop();

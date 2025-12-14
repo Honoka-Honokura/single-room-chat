@@ -7,10 +7,25 @@ const { Server } = require("socket.io");
 
 // ★ Socket.io：スマホ/タブ切替での不安定さを少しでも軽減
 const io = new Server(http, {
-  pingInterval: 20000,
-  pingTimeout: 20000,
+  // タブ切替/省電力で止まりがちな環境を想定して余裕を持たせる
+  pingInterval: 25000,
+  pingTimeout: 45000,
+
+  // iOS/回線で websocket が落ちる時の保険
   transports: ["websocket", "polling"],
+  upgradeTimeout: 20000,
+
+  // メッセージ圧縮でCPU負荷が上がることがある（小規模ならOFFでもOK）
+  perMessageDeflate: false,
+
+  // （使えるSocket.ioバージョンなら）復帰時に取りこぼしを自動回収
+  // ※もし起動エラーになるならこの block は外してOK（pollが保険になってる）
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000, // 2分まで復帰扱い
+    skipMiddlewares: true
+  }
 });
+
 
 // ★ お題ガチャ用のモジュール（永続化＋編集・削除対応）
 const { drawTopic, getTopics, addTopic, updateTopic, deleteTopic } = require("./topics");
