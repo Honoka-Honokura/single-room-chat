@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>管理 - モデレーション & BAN</title>
+  <style>
+    body{font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;margin:16px;line-height:1.6}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .card{border:1px solid #ddd;border-radius:12px;padding:12px;min-width:320px;flex:1}
+    label{display:block;font-weight:700;margin-top:10px}
+    input,textarea,button,select{width:100%;padding:10px;border-radius:10px;border:1px solid #ccc}
+    textarea{min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace}
+    button{cursor:pointer;font-weight:700}
+    .ok{color:#0a7f2e;font-weight:700}
+    .ng{color:#b00020;font-weight:700}
+    small{color:#555}
+
+    /* はみ出し防止（最重要） */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* ついでにカード内の横溢れも防ぐ */
+.card {
+  overflow: hidden;
+}
+
+/* iOS等での変な拡大や横ズレ抑制（任意） */
+input, textarea, select, button {
+  max-width: 100%;
+}
+
+  </style>
+</head>
+<body>
+  <h1>管理：モデレーション & BAN</h1>
+
+  <div class="card" style="max-width:520px">
+    <h2>管理パスワード</h2>
+    <input id="adminPw" type="password" placeholder="ADMIN_PASSWORD" />
+    <button id="loadBtn">読み込み</button>
+    <button id="savePwBtn">保存</button>
+    <p><small>※ このページは public 配信なので、パスワードは必ず入力が必要です（保存はlocalStorage）。</small></p>
+  </div>
+
+  <hr style="margin:18px 0" />
+
+  <div class="row">
+    <div class="card">
+      <h2>制限</h2>
+      <label>最大文字数（maxMsgLen）</label>
+      <input id="maxMsgLen" type="number" min="1" />
+      <label>連投制限ms（minIntervalMs）</label>
+      <input id="minIntervalMs" type="number" min="0" />
+      <label>URL上限（maxUrlsPerMsg）</label>
+      <input id="maxUrlsPerMsg" type="number" min="0" />
+      <label style="display:flex;gap:10px;align-items:center">
+        <input id="blockPII" type="checkbox" style="width:auto;transform:scale(1.2)" />
+        個人情報ブロック（blockPII）
+      </label>
+      <div style="height:10px"></div>
+      <button id="saveModBtn">モデレーション保存</button>
+      <p id="modStatus"></p>
+    </div>
+
+    <div class="card">
+      <h2>NGワード（部分一致）</h2>
+      <label>ngWords（1行1個）</label>
+      <textarea id="ngWords"></textarea>
+
+      <h2 style="margin-top:16px">NG正規表現（高度）</h2>
+      <label>ngRegexes（1行1個：JS正規表現の中身）</label>
+      <textarea id="ngRegexes" placeholder="例：し\\s*ね"></textarea>
+      <small>※ 重い正規表現は避けてください。</small>
+    </div>
+  </div>
+
+  <hr style="margin:18px 0" />
+
+  <div class="row">
+    <div class="card">
+      <h2>BAN追加</h2>
+      <label>タイプ</label>
+      <select id="banType">
+        <option value="clientId">clientId</option>
+        <option value="ip">ip</option>
+      </select>
+
+      <label>値</label>
+      <input id="banValue" placeholder="clientId か IP" />
+
+      <label>理由（任意）</label>
+      <input id="banReason" placeholder="荒らし など" />
+
+      <label>期限（分）（0=無期限）</label>
+      <input id="banMinutes" type="number" min="0" value="0" />
+
+      <div style="height:10px"></div>
+      <button id="banAddBtn">BAN追加</button>
+      <p id="banStatus"></p>
+    </div>
+
+<div class="card">
+  <h2>オンライン一覧（BAN用）</h2>
+  <button id="onlineReloadBtn">再読み込み</button>
+  <div id="onlineList" style="margin-top:10px"></div>
+</div>
+
+
+    <div class="card">
+      <h2>BAN一覧</h2>
+      <button id="banReloadBtn">再読み込み</button>
+      <div id="banList" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+<script>
+function getPw(){ return localStorage.getItem("ADMIN_PW") || ""; }
+function setPw(v){ localStorage.setItem("ADMIN_PW", v); }
+
+document.getElementById("adminPw").value = getPw();
+document.getElementById("savePwBtn").onclick = ()=>{
+  setPw(document.getElementById("adminPw").value.trim());
+  alert("保存しました");
+};
+
+async function apiGet(url){
+  const pw = getPw() || document.getElementById("adminPw").value.trim();
+  const r = await fetch(url, { headers: { "x-admin-password": pw } });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+async function apiSend(url, method, body){
+  const pw = getPw() || document.getElementById("adminPw").value.trim();
+  const r = await fetch(url, {
+    method,
+    headers: { "Content-Type":"application/json", "x-admin-password": pw },
+    body: JSON.stringify(body || {})
+  });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function linesToArray(text){
+  return text.split("\n").map(s=>s.trim()).filter(Boolean);
+}
+function arrayToLines(arr){
+  return (arr || []).join("\n");
+}
+
+async function loadModeration(){
+  const data = await apiGet("/api/moderation");
+  document.getElementById("maxMsgLen").value = data.maxMsgLen ?? 300;
+  document.getElementById("minIntervalMs").value = data.minIntervalMs ?? 1000;
+  document.getElementById("maxUrlsPerMsg").value = data.maxUrlsPerMsg ?? 3;
+  document.getElementById("blockPII").checked = !!data.blockPII;
+  document.getElementById("ngWords").value = arrayToLines(data.ngWords);
+  document.getElementById("ngRegexes").value = arrayToLines(data.ngRegexes);
+}
+
+async function saveModeration(){
+  return apiSend("/api/moderation", "PUT", {
+    maxMsgLen: Number(document.getElementById("maxMsgLen").value),
+    minIntervalMs: Number(document.getElementById("minIntervalMs").value),
+    maxUrlsPerMsg: Number(document.getElementById("maxUrlsPerMsg").value),
+    blockPII: document.getElementById("blockPII").checked,
+    ngWords: linesToArray(document.getElementById("ngWords").value),
+    ngRegexes: linesToArray(document.getElementById("ngRegexes").value)
+  });
+}
+
+function renderBan(items){
+  const root = document.getElementById("banList");
+  root.innerHTML = "";
+  if(!items || items.length === 0){
+    root.textContent = "BANはありません";
+    return;
+  }
+  items.forEach(it=>{
+    const exp = it.expiresAt ? new Date(it.expiresAt).toLocaleString() : "無期限";
+    const div = document.createElement("div");
+    div.style.border="1px solid #ddd";
+    div.style.borderRadius="10px";
+    div.style.padding="10px";
+    div.style.marginBottom="8px";
+    div.innerHTML = `
+      <div><b>${it.type}</b> : ${it.value}</div>
+      <div><small>理由: ${it.reason || "-"}</small></div>
+      <div><small>期限: ${exp}</small></div>
+      <button data-id="${it.id}" style="margin-top:8px">解除</button>
+    `;
+    div.querySelector("button").onclick = async (e)=>{
+      const id = e.target.getAttribute("data-id");
+      try{
+        await apiSend("/api/ban/"+encodeURIComponent(id), "DELETE", {});
+        await reloadBan();
+      }catch(err){
+        alert(err.message);
+      }
+    };
+    root.appendChild(div);
+  });
+}
+
+function esc(s){
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+  }[c]));
+}
+
+async function reloadOnline(){
+  const data = await apiGet("/api/admin/online");
+  const list = (data.users || []);
+  const root = document.getElementById("onlineList");
+  root.innerHTML = "";
+
+  if(list.length === 0){
+    root.textContent = "オンラインユーザーはいません";
+    return;
+  }
+
+  list.forEach(u=>{
+    const div = document.createElement("div");
+    div.style.border="1px solid #ddd";
+    div.style.borderRadius="10px";
+    div.style.padding="10px";
+    div.style.marginBottom="8px";
+
+    const label = `${esc(u.name)} / clientId=${esc(u.clientId)} / ip=${esc(u.ip)}`;
+    div.innerHTML = `
+      <div><b>${label}</b></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button data-mode="clientId" data-min="0">clientId 無期限</button>
+        <button data-mode="clientId" data-min="5">clientId 5分</button>
+        <button data-mode="clientId" data-min="30">clientId 30分</button>
+        <button data-mode="ip" data-min="0">IP 無期限</button>
+        <button data-mode="both" data-min="0">両方 無期限</button>
+      </div>
+      <div style="margin-top:8px">
+        <input data-reason placeholder="理由（任意）" />
+      </div>
+    `;
+
+    const reasonInput = div.querySelector("input[data-reason]");
+
+    div.querySelectorAll("button").forEach(btn=>{
+      btn.onclick = async ()=>{
+        const mode = btn.getAttribute("data-mode");
+        const minutes = Number(btn.getAttribute("data-min") || 0);
+        const reason = (reasonInput.value || "").trim();
+
+        if(!confirm(`${u.name} を ${mode} でBANして退出させます。\n（${minutes>0? minutes+"分": "無期限"}）\n実行しますか？`)) return;
+
+        try{
+          await apiSend("/api/ban/online", "POST", {
+            socketId: u.socketId,
+            mode,
+            minutes,
+            reason
+          });
+          await reloadOnline();
+          await reloadBan();
+        }catch(err){
+          alert("BAN失敗: " + err.message);
+        }
+      };
+    });
+
+    root.appendChild(div);
+  });
+}
+
+document.getElementById("onlineReloadBtn").onclick = ()=>{
+  reloadOnline().catch(err=>alert("読み込み失敗: "+err.message));
+};
+
+
+async function reloadBan(){
+  const data = await apiGet("/api/ban");
+  renderBan(data.items || []);
+}
+
+document.getElementById("saveModBtn").onclick = async ()=>{
+  const s = document.getElementById("modStatus");
+  s.textContent = "";
+  try{
+    await saveModeration();
+    s.innerHTML = '<span class="ok">保存しました（即反映）</span>';
+  }catch(err){
+    s.innerHTML = '<span class="ng">保存失敗：</span>' + err.message;
+  }
+};
+
+document.getElementById("banAddBtn").onclick = async ()=>{
+  const s = document.getElementById("banStatus");
+  s.textContent = "";
+  const type = document.getElementById("banType").value;
+  const value = document.getElementById("banValue").value.trim();
+  const reason = document.getElementById("banReason").value.trim();
+  const minutes = Number(document.getElementById("banMinutes").value || 0);
+  const expiresAt = minutes > 0 ? Date.now() + minutes*60*1000 : null;
+
+  try{
+    await apiSend("/api/ban", "POST", { type, value, reason, expiresAt });
+    s.innerHTML = '<span class="ok">BAN追加しました</span>';
+    document.getElementById("banValue").value = "";
+    document.getElementById("banReason").value = "";
+    document.getElementById("banMinutes").value = "0";
+    await reloadBan();
+  }catch(err){
+    s.innerHTML = '<span class="ng">追加失敗：</span>' + err.message;
+  }
+};
+
+document.getElementById("banReloadBtn").onclick = reloadBan;
+
+async function loadAll(){
+  await loadModeration();
+  await reloadBan();
+  await reloadOnline();
+}
+
+
+document.getElementById("loadBtn").onclick = async ()=>{
+  try{
+    // パスを保存してから読み込み
+    const v = document.getElementById("adminPw").value.trim();
+    if(!v){
+      alert("管理パスワードを入力してください");
+      return;
+    }
+    setPw(v);
+    await loadAll();
+  }catch(err){
+    alert("読み込み失敗: " + err.message);
+  }
+};
+
+// もし既に保存済みなら自動ロード（保存済みユーザーだけ快適に）
+if(getPw()){
+  loadAll().catch(()=>{ /* 初回は黙っておく */ });
+}
+
+</script>
+</body>
+</html>

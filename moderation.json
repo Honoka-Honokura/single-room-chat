@@ -1,0 +1,7 @@
+{
+  "maxMsgLen": 300,
+  "minIntervalMs": 1000,
+  "maxUrlsPerMsg": 3,
+  "blockPII": true,
+  "ngWords": ["死ね", "殺す"]
+}

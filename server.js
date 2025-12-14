@@ -4,6 +4,9 @@ const express = require("express");
 const app = express();
 const http = require("http").createServer(app);
 const { Server } = require("socket.io");
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
 
 // ★ Socket.io：スマホ/タブ切替での不安定さを少しでも軽減
 const io = new Server(http, {
@@ -54,6 +57,103 @@ app.use(express.json());
 // 1部屋だけ使うので、部屋名は固定
 const ROOM_NAME = "main-room";
 
+// ===========================
+// ★ moderation / ban 永続化
+// ===========================
+const MODERATION_FILE = path.join(__dirname, "moderation.json");
+const BANLIST_FILE = path.join(__dirname, "banlist.json");
+
+function readJsonSafe(filePath, fallback) {
+  try {
+    if (!fs.existsSync(filePath)) return fallback;
+    const raw = fs.readFileSync(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("JSON read error:", filePath, e);
+    return fallback;
+  }
+}
+function writeJsonSafe(filePath, obj) {
+  const tmp = filePath + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), "utf8");
+  fs.renameSync(tmp, filePath);
+}
+function uid() {
+  return crypto.randomBytes(8).toString("hex");
+}
+
+let moderation = readJsonSafe(MODERATION_FILE, {
+  maxMsgLen: 300,
+  minIntervalMs: 1000,
+  maxUrlsPerMsg: 3,
+  blockPII: true,
+  ngWords: [],
+  ngRegexes: []
+});
+
+let banlist = readJsonSafe(BANLIST_FILE, {
+  items: []
+});
+
+let compiledNgRegexes = [];
+function compileModerationRegexes() {
+  compiledNgRegexes = [];
+  for (const s of moderation.ngRegexes || []) {
+    try {
+      compiledNgRegexes.push(new RegExp(String(s), "i"));
+    } catch (e) {
+      console.warn("Invalid regex skipped:", s);
+    }
+  }
+}
+compileModerationRegexes();
+
+function cleanupExpiredBans() {
+  const now = Date.now();
+  banlist.items = (banlist.items || []).filter((it) => !it.expiresAt || it.expiresAt > now);
+  writeJsonSafe(BANLIST_FILE, banlist);
+}
+
+function getSocketIp(socket) {
+  // nginx / Cloudflare などが前段にある場合は x-forwarded-for が入る
+  const xf = socket.handshake.headers["x-forwarded-for"];
+  if (xf) return String(xf).split(",")[0].trim();
+  return socket.handshake.address || "";
+}
+
+function isBanned(clientId, ip) {
+  cleanupExpiredBans();
+  for (const it of banlist.items || []) {
+    if (it.type === "clientId" && clientId && it.value === clientId) return true;
+    if (it.type === "ip" && ip && it.value === ip) return true;
+  }
+  return false;
+}
+
+// URL数（既存の URL_REGEX があるので count 用だけ追加）
+function countUrls(text) {
+  const m = String(text || "").match(/https?:\/\/[^\s]+/gi);
+  return m ? m.length : 0;
+}
+
+function containsNgWordByModeration(text) {
+  const normalized = normalizeForCheck(text);
+
+  // 単語（部分一致）
+  for (const w of moderation.ngWords || []) {
+    const nw = normalizeForCheck(w);
+    if (nw && normalized.includes(nw)) return true;
+  }
+
+  // 正規表現
+  for (const re of compiledNgRegexes) {
+    try {
+      if (re.test(String(text))) return true;
+    } catch (_) {}
+  }
+  return false;
+}
+
 // 接続中ユーザー一覧: { socket.id: { name, color } }
 const users = {};
 
@@ -77,7 +177,23 @@ const MAX_USERS = 10;
 const AUTO_LEAVE_MS = 10 * 60 * 1000;
 
 // 連投制限（1秒）
-const MIN_INTERVAL_MS = 1000;
+function checkRateLimit(clientId) {
+  if (!clientId) return 0;
+
+  const now = Date.now();
+  const last = lastActionTimeByClientId[clientId] || 0;
+  const diff = now - last;
+
+  const min = Number(moderation.minIntervalMs ?? 1000);
+
+  if (diff < min) {
+    return min - diff;
+  }
+
+  lastActionTimeByClientId[clientId] = now;
+  return 0;
+}
+
 
 // clientId ごとの最後のアクション時刻
 const lastActionTimeByClientId = {};
@@ -93,7 +209,6 @@ const lastLeaveByClientId = {};
 
 // URL貼りすぎ防止
 const URL_REGEX = /(https?:\/\/[^\s]+)/gi;
-const MAX_URLS_PER_MESSAGE = 3;
 
 // 危険・スパムとみなすドメイン
 const BLOCKED_URL_DOMAINS = ["bit.ly", "t.co", "discord.gg", "goo.gl", "tinyurl.com"];
@@ -331,6 +446,228 @@ if (!ADMIN_PASSWORD) {
   process.exit(1);
 }
 
+function requireAdmin(req, res) {
+  const password =
+    req.query.password ||
+    req.headers["x-admin-password"] ||
+    (req.body && req.body.password);
+
+  if (password !== ADMIN_PASSWORD) {
+    res.status(403).json({ error: "forbidden" });
+    return null;
+  }
+  return true;
+}
+
+// ===========================
+// ★ 管理者：オンライン一覧
+// ===========================
+app.get("/api/admin/online", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const list = [];
+
+  for (const [socketId, u] of Object.entries(users)) {
+    const s = io.sockets.sockets.get(socketId);
+    const ip = s ? getSocketIp(s) : "";
+
+    list.push({
+      socketId,
+      name: u.name,
+      color: u.color || null,
+      clientId: socketClientIds[socketId] || null,
+      ip
+    });
+  }
+
+  res.json({ ok: true, users: list });
+});
+
+// ===========================
+// ★ 管理者：オンラインからBAN（clientId/ip/both）＋キック
+// ===========================
+function adminKickSocket(socketId, reasonText = "BAN") {
+  const user = users[socketId];
+  const s = io.sockets.sockets.get(socketId);
+
+  // 既にいない
+  if (!user) {
+    if (s) s.disconnect(true);
+    return { ok: false, message: "user not found" };
+  }
+
+  const name = user.name;
+
+  // サーバー内の状態を掃除（leave/timeout と同等の片付け）
+  delete users[socketId];
+  typingUsers.delete(socketId);
+  delete lastActivityTimes[socketId];
+
+  const clientId = socketClientIds[socketId];
+  if (clientId) {
+    delete socketClientIds[socketId];
+    lastLeaveByClientId[clientId] = Date.now();
+  }
+
+  if (s) {
+    s.leave(ROOM_NAME);
+    // 本人には理由を伝えてから切る（最後の通知）
+    s.emit("force-leave", { reason: reasonText });
+    s.disconnect(true);
+  }
+
+  // ルームへ通知（好みで文言変えてOK）
+  emitSystem(`「${name}」さんは管理者により退出されました。`);
+
+  broadcastUserList();
+  broadcastTypingUsers();
+
+  if (Object.keys(users).length === 0) {
+    chatLog.length = 0;
+    typingUsers.clear();
+    console.log("All users left. chatLog cleared.");
+  }
+
+  return { ok: true };
+}
+
+app.post("/api/ban/online", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const { socketId, mode, minutes, reason } = req.body || {};
+  if (!socketId) return res.status(400).json({ error: "socketId required" });
+
+  const s = io.sockets.sockets.get(socketId);
+  const clientId = socketClientIds[socketId] || null;
+  const ip = s ? getSocketIp(s) : "";
+
+  // 対象がいない（または切断済み）
+  if (!clientId && !ip) {
+    return res.status(404).json({ error: "target not found" });
+  }
+
+  const m = ["clientId", "ip", "both"].includes(mode) ? mode : "clientId";
+  const durMin = Number(minutes || 0);
+  const expiresAt = durMin > 0 ? Date.now() + durMin * 60 * 1000 : null;
+
+  cleanupExpiredBans();
+
+  function addBan(type, value) {
+    if (!value) return;
+    // 重複BAN防止
+    const exists = (banlist.items || []).some(it => it.type === type && it.value === value && (!it.expiresAt || it.expiresAt > Date.now()));
+    if (exists) return;
+
+    const item = {
+      id: uid(),
+      type,
+      value,
+      reason: typeof reason === "string" ? reason.trim() : "",
+      expiresAt,
+      createdAt: Date.now()
+    };
+    banlist.items.push(item);
+  }
+
+  banlist.items = banlist.items || [];
+
+  if (m === "clientId" || m === "both") addBan("clientId", clientId);
+  if (m === "ip" || m === "both") addBan("ip", ip);
+
+  writeJsonSafe(BANLIST_FILE, banlist);
+
+  // 即キック
+  const kick = adminKickSocket(socketId, "banned");
+
+  res.json({
+    ok: true,
+    banned: { mode: m, clientId, ip, expiresAt },
+    kick
+  });
+});
+
+
+// ===========================
+// ★ moderation 管理API
+// ===========================
+
+// 取得
+app.get("/api/moderation", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  res.json(moderation);
+});
+
+// 更新（永続化して即反映）
+app.put("/api/moderation", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const b = req.body || {};
+  moderation = {
+    maxMsgLen: Number(b.maxMsgLen ?? 300),
+    minIntervalMs: Number(b.minIntervalMs ?? 1000),
+    maxUrlsPerMsg: Number(b.maxUrlsPerMsg ?? 3),
+    blockPII: !!b.blockPII,
+    ngWords: Array.isArray(b.ngWords) ? b.ngWords.map(String) : [],
+    ngRegexes: Array.isArray(b.ngRegexes) ? b.ngRegexes.map(String) : []
+  };
+
+  writeJsonSafe(MODERATION_FILE, moderation);
+  compileModerationRegexes();
+  res.json({ ok: true });
+});
+
+// ===========================
+// ★ BAN 管理API
+// ===========================
+
+// 一覧
+app.get("/api/ban", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  cleanupExpiredBans();
+  res.json({ items: banlist.items || [] });
+});
+
+// 追加
+app.post("/api/ban", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const { type, value, reason, expiresAt } = req.body || {};
+  if (!["clientId", "ip"].includes(type)) {
+    return res.status(400).json({ error: "type must be clientId or ip" });
+  }
+  if (!value || typeof value !== "string") {
+    return res.status(400).json({ error: "value required" });
+  }
+
+  cleanupExpiredBans();
+
+  const item = {
+    id: uid(),
+    type,
+    value: value.trim(),
+    reason: typeof reason === "string" ? reason.trim() : "",
+    expiresAt: expiresAt ? Number(expiresAt) : null,
+    createdAt: Date.now()
+  };
+
+  banlist.items = banlist.items || [];
+  banlist.items.push(item);
+  writeJsonSafe(BANLIST_FILE, banlist);
+
+  res.json({ ok: true, item });
+});
+
+// 解除
+app.delete("/api/ban/:id", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const id = String(req.params.id || "");
+  banlist.items = (banlist.items || []).filter((it) => it.id !== id);
+  writeJsonSafe(BANLIST_FILE, banlist);
+  res.json({ ok: true });
+});
+
+
 // 一覧取得
 app.get("/api/topics", (req, res) => {
   const password = req.query.password || req.headers["x-admin-password"];
@@ -470,6 +807,18 @@ io.on("connection", (socket) => {
     if (!clientId) clientId = socket.id;
     socketClientIds[socket.id] = clientId;
 
+    // ★ BAN判定（clientId / ip）
+    const ip = getSocketIp(socket);
+    if (isBanned(clientId, ip)) {
+      socket.emit("system-message", {
+        time: getTimeString(),
+        text: "この端末（または回線）はBANされています。",
+      });
+      socket.disconnect(true);
+      return;
+    }
+
+
     const displayName =
       rawName && rawName.trim() ? rawName.trim() : "user-" + Math.floor(Math.random() * 1000);
 
@@ -537,6 +886,34 @@ io.on("connection", (socket) => {
     const text = (msg || "").toString().trim();
     if (!text) return;
 
+    // ★ 長文制限
+    if (moderation.maxMsgLen && text.length > moderation.maxMsgLen) {
+      socket.emit("system-message", {
+        time: getTimeString(),
+        text: `長すぎます（最大 ${moderation.maxMsgLen} 文字）`,
+      });
+      return;
+    }
+
+    // ★ 個人情報ブロック（ON/OFFを管理画面で切り替え）
+    if (moderation.blockPII && containsPersonalInfo(text)) {
+      socket.emit("system-message", {
+        time: getTimeString(),
+        text: "個人情報（電話番号やメールアドレスなど）は送信できません。",
+      });
+      return;
+    }
+
+    // ★ NGワード（管理画面で編集）
+    if (containsNgWordByModeration(text)) {
+      socket.emit("system-message", {
+        time: getTimeString(),
+        text: "NGワードが含まれているため、送信できません。",
+      });
+      return;
+    }
+
+
     // ここは「本人だけに出す警告」なのでログに残さない（idなしOK）
     if (containsPersonalInfo(text)) {
       socket.emit("system-message", {
@@ -555,13 +932,16 @@ io.on("connection", (socket) => {
     }
 
     const urls = text.match(URL_REGEX) || [];
-    if (urls.length > MAX_URLS_PER_MESSAGE) {
+    const maxUrls = Number(moderation.maxUrlsPerMsg ?? 3);
+
+    if (urls.length > maxUrls) {
       socket.emit("system-message", {
         time: getTimeString(),
-        text: `1つのメッセージに貼れるURLは最大 ${MAX_URLS_PER_MESSAGE} 件までです。`,
+        text: `1つのメッセージに貼れるURLは最大 ${maxUrls} 件までです。`,
       });
       return;
     }
+
 
     if (urls.length > 0) {
       try {
