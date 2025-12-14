@@ -269,7 +269,7 @@ function getTimeString() {
   });
 }
 
-// 共通の連投チェック関数
+// 共通の連投チェック関数（moderation版）
 function checkRateLimit(clientId) {
   if (!clientId) return 0;
 
@@ -277,13 +277,16 @@ function checkRateLimit(clientId) {
   const last = lastActionTimeByClientId[clientId] || 0;
   const diff = now - last;
 
-  if (diff < MIN_INTERVAL_MS) {
-    return MIN_INTERVAL_MS - diff;
+  const min = Number(moderation?.minIntervalMs ?? 1000);
+
+  if (diff < min) {
+    return min - diff;
   }
 
   lastActionTimeByClientId[clientId] = now;
   return 0;
 }
+
 
 // ★ chatLogに追加しつつ、ロングポーリング待機者にも配る
 function pushLog(entry) {
