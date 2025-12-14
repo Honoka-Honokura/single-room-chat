@@ -166,8 +166,6 @@ header {
     background: linear-gradient(135deg, #fef2f2, #fff7ed);
     border: 1px solid #fecaca;
     box-shadow: 0 2px 4px rgba(0,0,0,0.08);
-    white-space: pre-wrap;
-    word-break: break-word;
 }
 
 /* 上部のヘッダー行（ラベル＋メタ情報） */
@@ -206,6 +204,8 @@ header {
     font-weight: 600;
     color: #7f1d1d;
     line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 /* ================================
