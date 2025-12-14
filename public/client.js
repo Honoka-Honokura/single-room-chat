@@ -433,13 +433,24 @@ socket.on("topic-result", (payload) => {
   }, true);
 });
 
-// system-message は見た目を維持しつつ、id無しでも表示はする
-socket.on("system-message", ({ time, text }) => {
-  // ここは server の emitSystem が pushLog してるので、
-  // 復帰時は /api/log /api/poll 側で必ず整合が取れる。
-  // ただしリアルタイムも欲しいので表示だけする（重複はsyncで吸収される）
+// system-message：idがあるなら renderLogItem に通して重複排除する
+socket.on("system-message", (payload) => {
   if (!joined) return;
-  renderSystem({ time, text });
+
+  // server.js の emitSystem() は {id,time,text} を送ってくる
+  if (payload && payload.id) {
+    renderLogItem({
+      id: payload.id,
+      type: "system",
+      time: payload.time,
+      text: payload.text,
+      color: null
+    }, true);
+    return;
+  }
+
+  // 念のため：id無し（旧互換 / 自分だけに出す警告など）はそのまま表示
+  renderSystem({ time: payload.time, text: payload.text });
   trimChatDom();
   scrollBottom();
 });
