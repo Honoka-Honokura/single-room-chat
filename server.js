@@ -269,6 +269,19 @@ function getTimeString() {
   });
 }
 
+// ★ 性別記号を末尾に付与（サーバ側で強制）
+// gender: "male" | "female"
+function applyGenderMark(name, gender) {
+  const base = String(name || "").trim();
+
+  // 二重付与しない（既に末尾に付いてたらそのまま）
+  if (base.endsWith("♂") || base.endsWith("♀")) return base;
+
+  if (gender === "male") return base + "♂";
+  if (gender === "female") return base + "♀";
+  return base;
+}
+
 // 共通の連投チェック関数（moderation版）
 function checkRateLimit(clientId) {
   if (!clientId) return 0;
@@ -787,14 +800,17 @@ io.on("connection", (socket) => {
     let rawName = "";
     let color = null;
     let clientId = null;
+    let gender = ""; // ★追加
 
     if (typeof payload === "string" || payload === undefined || payload === null) {
-      rawName = payload || "";
+    rawName = payload || "";
     } else {
-      rawName = payload.name || "";
-      color = payload.color || null;
-      clientId = payload.clientId || null;
+    rawName = payload.name || "";
+    color = payload.color || null;
+    clientId = payload.clientId || null;
+    gender = payload.gender || ""; // ★追加
     }
+
 
     if (!clientId) clientId = socket.id;
     socketClientIds[socket.id] = clientId;
@@ -811,10 +827,15 @@ io.on("connection", (socket) => {
     }
 
 
-    const displayName =
-      rawName && rawName.trim() ? rawName.trim() : "user-" + Math.floor(Math.random() * 1000);
+    const baseName =
+    rawName && rawName.trim() ? rawName.trim() : "user-" + Math.floor(Math.random() * 1000);
 
-    users[socket.id] = { name: displayName, color };
+    // ★ ここでサーバ側が最終確定（クライアント改ざん対策）
+    const displayName = applyGenderMark(baseName, gender);
+
+    // ★ gender も保存（change-nameで使う）
+    users[socket.id] = { name: displayName, color, gender };
+
     socket.join(ROOM_NAME);
 
     console.log(displayName, "joined (clientId:", clientId, ")");
@@ -841,20 +862,27 @@ io.on("connection", (socket) => {
   });
 
   // 名前変更
-  socket.on("change-name", (newName) => {
+    socket.on("change-name", (newName) => {
     const user = users[socket.id];
     if (!user) return;
 
     const oldName = user.name;
-    const trimmed = (newName || "").trim();
-    if (!trimmed || trimmed === oldName) return;
 
-    user.name = trimmed;
+    const base = (newName || "").trim();
+    if (!base) return;
+
+    // ★ gender は join 時に保存したものを使う
+    const finalName = applyGenderMark(base, user.gender);
+
+    if (finalName === oldName) return;
+
+    user.name = finalName;
     touchActivity(socket.id);
 
-    emitSystem(`「${oldName}」さんは名前を「${trimmed}」に変更しました。`);
+    emitSystem(`「${oldName}」さんは名前を「${finalName}」に変更しました。`);
     broadcastUserList();
-  });
+    });
+
 
   // 吹き出し色の変更
   socket.on("change-color", (newColor) => {
@@ -941,6 +969,32 @@ socket.on("send-message", (msg) => {
     } catch (_) {}
   }
 });
+
+    // 1D6
+    socket.on("roll-1d6", () => {
+    const user = users[socket.id];
+    if (!user) return;
+
+    const clientId = socketClientIds[socket.id] || socket.id;
+    const waitMs = checkRateLimit(clientId);
+    if (waitMs > 0) {
+        socket.emit("rate-limit", { waitMs });
+        return;
+    }
+
+    const d = Math.floor(Math.random() * 6) + 1;
+
+    const name = user.name || "ななし";
+    const color = user.color || "#FFFFFF";
+    const text = `🎲 ${name} が 1D6 を振った：${d}`;
+
+    emitLog(
+        "dice",
+        { name, text, color },
+        { fromId: socket.id }
+    );
+    });
+
 
   // 2D6
   socket.on("roll-dice", () => {
@@ -1030,6 +1084,7 @@ socket.on("send-message", (msg) => {
 
     const clientId = socketClientIds[socket.id];
     if (clientId) {
+      lastLeaveByClientId[clientId] = Date.now(); // ★追加（再入室判定のため）
       delete socketClientIds[socket.id];
     }
 

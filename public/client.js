@@ -8,7 +8,6 @@
 // ★ 二重起動ガード（万一 client.js が2回動いても事故らない）
 if (window.__LVCHAT_CLIENT_LOADED__) {
   console.warn("client.js already initialized. Skip.");
-  // ここで return してもOKだが、環境によってはトップレベルreturn不可があるのでガードだけ
 } else {
   window.__LVCHAT_CLIENT_LOADED__ = true;
 }
@@ -68,7 +67,6 @@ const socket = io({
   randomizationFactor: 0.3
 });
 
-
 const nameInput = document.getElementById("nameInput");
 const joinBtn = document.getElementById("joinBtn");
 const renameBtn = document.getElementById("renameBtn");
@@ -87,6 +85,7 @@ const infoBeforeJoin = document.getElementById("chatInfoBeforeJoin");
 const preLoginNotice = document.getElementById("preLoginNotice");
 const templateButtons = document.querySelectorAll(".template-btn");
 
+const roll1d6Btn = document.getElementById("roll1d6Btn");
 const roll2d6Btn = document.getElementById("roll2d6Btn");
 const topicRouletteBtn = document.getElementById("topicRouletteBtn");
 
@@ -109,6 +108,12 @@ const mobileUserList = document.getElementById("mobileUserList");
 // 吹き出し色のラジオボタン
 const colorInputs = document.querySelectorAll('input[name="bubbleColor"]');
 
+// ★ 性別（入室前に選択）
+function getSelectedGender() {
+  const el = document.querySelector('input[name="gender"]:checked');
+  return el ? el.value : "";
+}
+
 /* 状態 ------------------------------ */
 let joined = false;
 let mySocketId = null;
@@ -117,6 +122,7 @@ let isTyping = false;
 
 let shouldAutoJoin = false;
 let lastKnownName = "";
+let lastKnownGender = "";
 let lastKnownColor = null;
 
 // 現在色（入室前も保持）
@@ -192,13 +198,22 @@ function renderSystem(item) {
 function renderTopic(item) {
   const wrapper = document.createElement("div");
   wrapper.className = "system-message topic-message";
-  wrapper.innerHTML = `
-    <div class="topic-header">
-      <span class="topic-label">お仕置きガチャ</span>
-      <span class="topic-meta">[${item.time}] ${item.name}さんが引きました</span>
-    </div>
-    <div class="topic-body">${item.topic}</div>
+
+  const header = document.createElement("div");
+  header.className = "topic-header";
+  header.innerHTML = `
+    <span class="topic-label">お仕置きガチャ</span>
+    <span class="topic-meta">[${item.time}] ${item.name}さんが引きました</span>
   `;
+
+  const body = document.createElement("div");
+  body.className = "topic-body";
+  // ★ innerHTML直差しをやめる（改行はCSS pre-wrapで出る）
+  body.textContent = item.topic;
+
+  wrapper.appendChild(header);
+  wrapper.appendChild(body);
+
   chatLog.append(wrapper);
 }
 
@@ -260,10 +275,6 @@ async function syncFullLog() {
   clearChatDom();
   seenIds.clear();
 
-  // ここは0に戻さず、localStorage の lastSeenId を活かしても良いが
-  // 表示を作り直すので「renderLogItemで再記録」する方が安全
-  // （重複防止はseenIdsで担保）
-  // lastSeenId は renderLogItem/rememberSeen が更新してくれる
   for (const m of messages) {
     renderLogItem(m, false);
   }
@@ -419,8 +430,9 @@ socket.on("connect", async () => {
     const fallbackName = nameInput.value.trim() || "";
     const sendName = lastKnownName || fallbackName;
     const sendColor = lastKnownColor || currentColor || null;
+    const sendGender = lastKnownGender || getSelectedGender() || "";
 
-    socket.emit("join", { name: sendName, color: sendColor, clientId });
+    socket.emit("join", { name: sendName, color: sendColor, clientId, gender: sendGender });
   }
 
   preferPolling = false;
@@ -523,6 +535,7 @@ socket.on("force-leave", () => {
 
   shouldAutoJoin = false;
   lastKnownName = "";
+  lastKnownGender = "";
   lastKnownColor = null;
 
   inputRow.style.display = "none";
@@ -542,6 +555,7 @@ socket.on("force-leave", () => {
   document.querySelector(".template-row").style.display = "none";
   templateButtons.forEach(btn => btn.disabled = true);
 
+  if (roll1d6Btn) roll1d6Btn.disabled = true;
   if (roll2d6Btn) roll2d6Btn.disabled = true;
   if (topicRouletteBtn) topicRouletteBtn.disabled = true;
 
@@ -569,14 +583,22 @@ joinBtn.addEventListener("click", async () => {
 
   const name = nameInput.value.trim() || "";
 
+  // ★ 性別必須
+  const gender = getSelectedGender();
+  if (!gender) {
+    alert("性別（男性/女性）を選択してください。");
+    return;
+  }
+
   const checked = document.querySelector('input[name="bubbleColor"]:checked');
   currentColor = checked ? checked.value : currentColor;
   const color = currentColor;
 
-  socket.emit("join", { name, color, clientId });
+  socket.emit("join", { name, color, clientId, gender });
 
   shouldAutoJoin = true;
   if (name) lastKnownName = name;
+  lastKnownGender = gender;
   lastKnownColor = color;
 
   joined = true;
@@ -597,6 +619,7 @@ joinBtn.addEventListener("click", async () => {
   msgInput.disabled = false;
   sendBtn.disabled = false;
 
+  if (roll1d6Btn) roll1d6Btn.disabled = false;
   if (roll2d6Btn) roll2d6Btn.disabled = false;
   if (topicRouletteBtn) topicRouletteBtn.disabled = false;
 
@@ -639,6 +662,11 @@ leaveBtn.addEventListener("click", () => {
   joined = false;
   document.body.classList.remove("joined");
 
+  shouldAutoJoin = false;
+  lastKnownName = "";
+  lastKnownGender = "";
+  lastKnownColor = null;
+
   joinRow.style.display = "flex";
   joinBtn.disabled = false;
   joinBtn.style.display = "inline-block";
@@ -651,6 +679,7 @@ leaveBtn.addEventListener("click", () => {
   msgInput.disabled = true;
   sendBtn.disabled = true;
 
+  if (roll1d6Btn) roll1d6Btn.disabled = true;
   if (roll2d6Btn) roll2d6Btn.disabled = true;
   if (topicRouletteBtn) topicRouletteBtn.disabled = true;
 
@@ -734,6 +763,13 @@ templateButtons.forEach(btn => {
 });
 
 /* ダイス */
+if (roll1d6Btn) {
+  roll1d6Btn.addEventListener("click", () => {
+    if (!joined) return;
+    socket.emit("roll-1d6");
+  });
+}
+
 if (roll2d6Btn) {
   roll2d6Btn.addEventListener("click", () => {
     if (!joined) return;
@@ -752,11 +788,9 @@ if (topicRouletteBtn) {
 /* ====== ルブル寄りの「復帰強化」 ====== */
 // タブ復帰で強制同期（iOS対策）
 async function forceResync(reason = "") {
-  // joined中だけ重い同期をする
   if (joined) {
     try { await syncFullLog(); } catch {}
   }
-  // socketが死んでたら再接続を促す
   if (!socket.connected) {
     try { socket.connect(); } catch {}
   }
@@ -780,10 +814,6 @@ window.addEventListener("pageshow", (e) => {
 window.addEventListener("online", () => {
   forceResync("online");
 });
-
-// pollは常時起動（入室してない時は待つので負荷は小）
-startPollLoop();
-
 
 // pollは常時起動（入室してない時は待つので負荷は小）
 startPollLoop();

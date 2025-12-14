@@ -222,16 +222,92 @@ header {
     flex-shrink: 0;      /* 高さは中身に合わせる */
 }
 
-/* 入室前：名前入力 */
-.name-row {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 4px;
+/* 入室行 全体のレイアウト */
+#joinRow{
+  display:flex;
+  align-items:center;
+  gap:10px;              /* ★ すべての横間隔を統一 */
+  flex-wrap:wrap;  
 }
+
+
+/* 入室前：名前入力（joinRowで間隔を管理するので中では詰めない） */
+.name-row{
+  display:flex;
+  align-items:center;
+  gap:0;
+  margin:0;
+  flex:1;              /* ★ ここ重要：nameRowは横幅を取る */
+  min-width:0;
+}
+
 
 #nameInput {
     flex: 1;
 }
+
+/* 性別選択 */
+.gender-btn-group{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+
+/* ラジオは隠す（機能は生きる） */
+.gender-btn > input{
+  position:absolute;
+  opacity:0;
+  width:1px;
+  height:1px;
+}
+
+/* 見た目はボタン */
+.gender-btn > span{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:8px 12px;
+  border-radius:10px;
+  border:1px solid #d1d5db;
+  background:#ffffff;
+  color:#111827;
+  font-size:13px;
+  font-weight:600;
+  cursor:pointer;
+  user-select:none;
+  box-shadow:0 1px 2px rgba(15,23,42,0.06);
+  transition: background .12s ease, border-color .12s ease, transform .08s ease, box-shadow .12s ease, color .12s ease;
+}
+
+/* hoverでちょい浮く */
+.gender-btn > span:hover{
+  transform: translateY(-1px);
+  box-shadow:0 4px 12px rgba(15,23,42,0.10);
+}
+
+/* ✅ 選択中の“ボタン”だけ色が変わる */
+.gender-btn > input:checked + span{
+  background:#2563eb;
+  border-color:#2563eb;
+  color:#ffffff;
+  box-shadow:0 6px 16px rgba(37,99,235,0.22);
+}
+
+/* キーボード操作（Tab）でも分かる */
+.gender-btn > input:focus-visible + span{
+  outline:3px solid rgba(37,99,235,0.25);
+  outline-offset:2px;
+}
+
+/* 押した瞬間の感触 */
+.gender-btn:active > span{
+  transform: translateY(0);
+}
+
+
+
+
 
 /* メッセージ入力＆送信ボタン */
 .input-row {
@@ -581,6 +657,31 @@ body.joined #msgInput {
     transform: translateY(-5px) rotate(-45deg);
 }
 
+/* 入室ボタン：性別ボタンとトーン統一 */
+#joinBtn{
+  padding:8px 12px;
+  border-radius:10px;
+  border:1px solid #333333;
+  background:#333333;
+  color:#ffffff;
+  font-size:13px;
+  font-weight:600;
+  cursor:pointer;
+  box-shadow:0 1px 2px rgba(15,23,42,0.06);
+  transition: background .12s ease, border-color .12s ease, transform .08s ease, box-shadow .12s ease, color .12s ease;
+}
+
+#joinBtn:hover{
+  transform: translateY(-1px);
+  box-shadow:0 4px 12px rgba(15,23,42,0.10);
+}
+
+#joinBtn:active{
+  transform: translateY(0);
+}
+
+
+
 /* ================================
    スマホ向けレイアウト
 ================================ */
@@ -628,24 +729,32 @@ body.joined #msgInput {
         font-size: 16px;
         padding: 4px 6px;
         height: 32px;
-    }
-
-    .name-row button#joinBtn {
-        padding: 4px 8px;
-        font-size: 13px;
-        height: 32px;
+    } 
+    
+    .gender-btn > span{
+        height:36px;       /* ★ 性別ボタンも高さを揃える */
+        padding:0 12px;
     }
 
     /* 入力欄・送信・入室ボタンを統一した高さにする */
     .input-row input#msgInput,
     .input-row button#sendBtn,
-    
+    /* 入力欄だけ16px（iOSズーム対策） */
     .name-row input#nameInput,
-    .name-row button#joinBtn {
+    .input-row input#msgInput {
         box-sizing: border-box;
-        height: 36px;            /* ← 好きな高さに（32〜40推奨） */
+        height: 36px;
         font-size: 16px;
-        padding: 6px 8px;        /* ← input と button を揃える */
+        padding: 6px 8px;
+    }
+
+    /* ボタンはデザイン用サイズを維持 */
+    .name-row button#joinBtn,
+    .input-row button#sendBtn {
+        box-sizing: border-box;
+        height: 36px;
+        font-size: 13px;
+        padding: 0 12px;
     }
 
     /* 名前入力欄の全幅を維持 */
@@ -719,4 +828,10 @@ body.joined #msgInput {
         font-size: 13px;
     }
 
+}
+
+/* 入室中は「使い方」「ご利用上の注意」「入室前案内」をすべて非表示 */
+body.joined .chat-notice,
+body.joined #chatInfoBeforeJoin {
+    display: none !important;
 }

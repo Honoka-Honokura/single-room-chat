@@ -34,6 +34,20 @@
     </div>
 
     <div class="chat-notice" id="preLoginNotice">
+      <p class="chat-notice-title">使い方</p>
+      <ul class="chat-notice-list">
+        <li>入室前にニックネームと性別、吹き出しの色を選択します。</li>
+        <li>「入室する」ボタンを押すとチャットに参加できます。</li>
+        <li>画面下の入力欄にメッセージを入力し、送信してください。</li>
+        <li>定型文ボタンを使うと、ワンタップで発言できます。</li>
+        <li>他の参加者が入力中の場合、「入力中…」と表示されます。</li>
+        <li>右上メニューから、オンラインユーザー一覧を確認できます。</li>
+        <li>利用をやめる場合は「退室」ボタンを押してください。</li>
+      </ul>
+    </div>
+
+
+    <div class="chat-notice" id="preLoginNotice">
       <p class="chat-notice-title">⚠ ご利用上の注意</p>
       <ul class="chat-notice-list">
         <li>電話番号・メールアドレス・SNS ID などの <strong>個人情報は書き込まない</strong> でください。</li>
@@ -47,10 +61,25 @@
     <div id="chatLog"></div>
 
     <div class="footer">
-      <div class="name-row" id="joinRow">
+        <div class="name-row" id="joinRow">
         <input id="nameInput" type="text" placeholder="名前を入力" />
+
+        <!-- ★ 性別（入室前に選択） -->
+        <div class="gender-btn-group" id="genderRow">
+        <label class="gender-btn">
+            <input type="radio" name="gender" value="male">
+            <span>男性 ♂</span>
+        </label>
+
+        <label class="gender-btn">
+            <input type="radio" name="gender" value="female">
+            <span>女性 ♀</span>
+        </label>
+        </div>
+
+
         <button id="joinBtn">入室</button>
-      </div>
+        </div>
 
       <div class="color-row">
         <span class="color-label">吹き出し色：</span>
@@ -81,7 +110,8 @@
       <div class="template-row">
         <button class="template-btn" data-text="逝きそうです…♡" disabled>寸止め</button>
         <button class="template-btn" data-text="逝きました…♡" disabled>絶頂</button>
-        <button id="roll2d6Btn" class="dice-btn" disabled>🎲</button>
+        <button id="roll1d6Btn" class="dice-btn" disabled>🎲</button>
+        <button id="roll2d6Btn" class="dice-btn" disabled>🎲🎲</button>
         <button id="topicRouletteBtn" class="dice-btn" disabled>お仕置きガチャ</button>
       </div>
 
