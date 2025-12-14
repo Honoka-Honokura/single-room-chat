@@ -1,4 +1,5 @@
 // server.js
+require("dotenv").config();
 const express = require("express");
 const app = express();
 const http = require("http").createServer(app);
@@ -308,7 +309,12 @@ setInterval(() => {
 // ===========================
 
 // ★ 本番では .env などで外出し推奨
-const ADMIN_PASSWORD = "090919Honoka";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+if (!ADMIN_PASSWORD) {
+  console.error("❌ ADMIN_PASSWORD is not set in .env");
+  process.exit(1);
+}
 
 // 一覧取得
 app.get("/api/topics", (req, res) => {
