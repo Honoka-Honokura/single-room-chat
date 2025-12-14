@@ -183,10 +183,17 @@ function pushLog(entry) {
 // ★ system-message を「socket通知 + ログ追加」で統一
 function emitSystem(text) {
     const time = getTimeString();
-    pushLog({ type: "system", time, text, color: null });
+    const saved = pushLog({ type: "system", time, text, color: null });
 
-    io.to(ROOM_NAME).emit("system-message", { time, text });
+    io.to(ROOM_NAME).emit("system-message", {
+        id: saved.id,   // ★追加
+        time,
+        text
+    });
+
+    return saved;
 }
+
 
 function broadcastUserList() {
     const userList = Object.values(users).map(u => u.name);
