@@ -5,6 +5,14 @@
    - タブ復帰で強制同期
 ========================= */
 
+// ★ 二重起動ガード（万一 client.js が2回動いても事故らない）
+if (window.__LVCHAT_CLIENT_LOADED__) {
+  console.warn("client.js already initialized. Skip.");
+  // ここで return してもOKだが、環境によってはトップレベルreturn不可があるのでガードだけ
+} else {
+  window.__LVCHAT_CLIENT_LOADED__ = true;
+}
+
 // ★ ブラウザごとのクライアントIDを発行・保存
 let clientId = localStorage.getItem("chatClientId");
 if (!clientId) {
@@ -108,8 +116,15 @@ let currentColor = (() => {
 })();
 let pendingColor = null;
 
-/* ルブル寄り：差分同期用 ------------------ */
-let lastSeenId = 0;           // 最後に表示したログID
+/* =========================
+   ✅ ルブル寄り：差分同期用
+   - lastSeenId を localStorage に保存（リロード耐性UP）
+========================= */
+const LS_LAST_SEEN_ID_KEY = "lvchat_lastSeenId";
+
+let lastSeenId = Number(localStorage.getItem(LS_LAST_SEEN_ID_KEY) || 0);
+if (!Number.isFinite(lastSeenId) || lastSeenId < 0) lastSeenId = 0;
+
 const seenIds = new Set();    // 重複表示防止
 let pollRunning = false;
 let pollAbort = null;         // AbortController
@@ -120,11 +135,14 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function rememberSeen(id) {
   if (!id || !Number.isFinite(id)) return;
   seenIds.add(id);
-  if (id > lastSeenId) lastSeenId = id;
+
+  if (id > lastSeenId) {
+    lastSeenId = id;
+    localStorage.setItem(LS_LAST_SEEN_ID_KEY, String(lastSeenId));
+  }
 
   // Setが増えすぎないように（最大300くらい）
   if (seenIds.size > 300) {
-    // 古いIDから削除（雑にクリアでもOKだが、ここは安全側）
     const arr = Array.from(seenIds).sort((a,b)=>a-b);
     const keep = arr.slice(-200);
     seenIds.clear();
@@ -208,7 +226,6 @@ function renderLogItem(item, fromSocket = false) {
   } else if (item.type === "topic") {
     renderTopic(item);
   } else {
-    // chat / dice は同じ見た目（textを出す）
     const isSelf = fromSocket && item.fromId && (item.fromId === mySocketId);
     renderChatLike(item, isSelf);
   }
@@ -224,7 +241,6 @@ async function syncFullLog() {
 
   // UIが入室前ならDOM更新しない（入室後に見せる）
   if (!joined) {
-    // ただし lastSeenId は更新しておく（入室後に差分が取りやすい）
     for (const m of messages) {
       if (m.id) rememberSeen(m.id);
     }
@@ -233,8 +249,11 @@ async function syncFullLog() {
 
   clearChatDom();
   seenIds.clear();
-  lastSeenId = 0;
 
+  // ここは0に戻さず、localStorage の lastSeenId を活かしても良いが
+  // 表示を作り直すので「renderLogItemで再記録」する方が安全
+  // （重複防止はseenIdsで担保）
+  // lastSeenId は renderLogItem/rememberSeen が更新してくれる
   for (const m of messages) {
     renderLogItem(m, false);
   }
@@ -248,7 +267,6 @@ async function startPollLoop() {
 
   while (pollRunning) {
     try {
-      // 入室していないなら軽く待つ（無駄通信を避ける）
       if (!joined) {
         await sleep(1000);
         continue;
@@ -262,12 +280,10 @@ async function startPollLoop() {
         renderLogItem(m, false);
       }
 
-      // 空だったら少し待つ（負荷許容なら0でもOK）
       if (messages.length === 0) {
         await sleep(150);
       }
     } catch (e) {
-      // ネットワーク不安定時：少し待って再開
       await sleep(1000);
     }
   }
@@ -387,11 +403,8 @@ socket.on("connect", async () => {
   mySocketId = socket.id;
   statusText.textContent = joined ? "接続中" : "未入室";
 
-  // ★ つながった瞬間に同期（これで「更新されない」を潰す）
-  // joined中だけDOM同期、未入室でもlastSeenIdだけ更新される
   try { await syncFullLog(); } catch {}
 
-  // ★ 以前「入室中」なら必ず join を投げ直す（connectごとに）
   if (joined && shouldAutoJoin) {
     const fallbackName = nameInput.value.trim() || "";
     const sendName = lastKnownName || fallbackName;
@@ -400,12 +413,10 @@ socket.on("connect", async () => {
     socket.emit("join", { name: sendName, color: sendColor, clientId });
   }
 
-  // socketが復活したらpollは止めない（併用でOK）
   preferPolling = false;
 });
 
 socket.on("disconnect", () => {
-  // iOSで「切れてるのに気づかない」対策：pollは回し続ける
   statusText.textContent = joined ? "切断中…（復帰中）" : "未入室";
   preferPolling = true;
 });
@@ -415,14 +426,11 @@ socket.on("room-full", () => {
 });
 
 /* ====== Socket.io：受信 ====== */
-// server.jsで id を付けた前提（重複防止のため）
 socket.on("chat-message", (payload) => {
-  // payload: {id, time, name, text, fromId, color}
   renderLogItem(payload, true);
 });
 
 socket.on("topic-result", (payload) => {
-  // payload: {id, time, topic, drawnBy}
   renderLogItem({
     id: payload.id,
     type: "topic",
@@ -433,11 +441,10 @@ socket.on("topic-result", (payload) => {
   }, true);
 });
 
-// system-message：idがあるなら renderLogItem に通して重複排除する
+// ✅ system-message：idがあるなら renderLogItem に通して重複排除
 socket.on("system-message", (payload) => {
   if (!joined) return;
 
-  // server.js の emitSystem() は {id,time,text} を送ってくる
   if (payload && payload.id) {
     renderLogItem({
       id: payload.id,
@@ -449,7 +456,7 @@ socket.on("system-message", (payload) => {
     return;
   }
 
-  // 念のため：id無し（旧互換 / 自分だけに出す警告など）はそのまま表示
+  // id無し（本人だけ警告など）
   renderSystem({ time: payload.time, text: payload.text });
   trimChatDom();
   scrollBottom();
@@ -498,7 +505,7 @@ socket.on("typing-users", (names) => {
   typingInfo.textContent = text;
 });
 
-socket.on("force-leave", ({ reason }) => {
+socket.on("force-leave", () => {
   if (!joined) return;
 
   joined = false;
@@ -556,7 +563,6 @@ joinBtn.addEventListener("click", async () => {
   currentColor = checked ? checked.value : currentColor;
   const color = currentColor;
 
-  // ★ join
   socket.emit("join", { name, color, clientId });
 
   shouldAutoJoin = true;
@@ -565,7 +571,6 @@ joinBtn.addEventListener("click", async () => {
 
   joined = true;
 
-  // UI切替
   inputRow.style.display = "flex";
   if (colorRow) colorRow.style.display = "none";
 
@@ -592,11 +597,8 @@ joinBtn.addEventListener("click", async () => {
   if (preLoginNotice) preLoginNotice.style.display = "none";
   chatLog.style.display = "block";
 
-  if (!name) {
-    nameInput.placeholder = "名前はあとから変更できます";
-  }
+  if (!name) nameInput.placeholder = "名前はあとから変更できます";
 
-  // ★ 入室した瞬間に /api/log で確実に整合を取る（ルブル寄りの要）
   try { await syncFullLog(); } catch {}
 });
 
@@ -741,10 +743,8 @@ if (topicRouletteBtn) {
 // タブ復帰で強制同期（iOS対策）
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState === "visible") {
-    // 表に戻った瞬間に同期して、止まってた表示を必ず復活
     try { await syncFullLog(); } catch {}
 
-    // socketが死んでたら再接続（自動復帰率UP）
     if (!socket.connected) {
       try { socket.connect(); } catch {}
     }
