@@ -1,852 +1,120 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <title>大人の遊び場</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- 別ファイルに分けたCSS -->
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <title>大人の遊び場</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-    <div class="chat-wrapper">
-        <header>
-            <div id="roomTitle">大人の遊び場</div>
+  <div class="chat-wrapper">
+    <header>
+      <div id="roomTitle">大人の遊び場</div>
 
-            <div class="header-right">
-                <div id="statusText">未入室</div>
+      <div class="header-right">
+        <div id="statusText">未入室</div>
 
-                <!-- ★ スマホ用：ハンバーガーメニュー -->
-                <button id="mobileMenuBtn" class="mobile-menu-btn" aria-expanded="false">
-                    <!-- シンプルな三本線 -->
-                    <span></span><span></span><span></span>
-                </button>
-            </div>
-        </header>
+        <!-- ★ スマホ用：ハンバーガーメニュー -->
+        <button id="mobileMenuBtn" class="mobile-menu-btn" aria-expanded="false">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </header>
 
-        <!-- ★ スマホ用：ハンバーガーメニューの中身 -->
-        <nav id="mobileMenu" class="mobile-menu">
-            <button id="mobileMenuUserListBtn" class="mobile-menu-item">オンライン一覧</button>
-            <button id="mobileMenuChangeNameBtn" class="mobile-menu-item">名前変更</button>
-            <button id="mobileMenuColorBtn" class="mobile-menu-item">色変更</button>
-            <button id="mobileMenuLeaveBtn" class="mobile-menu-item mobile-menu-leave">退室</button>
-        </nav>
+    <!-- ★ スマホ用：ハンバーガーメニューの中身 -->
+    <nav id="mobileMenu" class="mobile-menu">
+      <button id="mobileMenuUserListBtn" class="mobile-menu-item">オンライン一覧</button>
+      <button id="mobileMenuChangeNameBtn" class="mobile-menu-item">名前変更</button>
+      <button id="mobileMenuColorBtn" class="mobile-menu-item">色変更</button>
+      <button id="mobileMenuLeaveBtn" class="mobile-menu-item mobile-menu-leave">退室</button>
+    </nav>
 
-
-
-        <div id="chatInfoBeforeJoin">
-            ※ 入室すると、この下にチャットが表示されます。
-        </div>
-
-        <!-- 利用上の注意ボックス（入室前のみ表示） -->
-        <div class="chat-notice" id="preLoginNotice">
-            <p class="chat-notice-title">⚠ ご利用上の注意</p>
-            <ul class="chat-notice-list">
-                <li>電話番号・メールアドレス・SNS ID などの <strong>個人情報は書き込まない</strong> でください。</li>
-                <li>LINE や X（Twitter）など、<strong>外部サービスのID交換はしない</strong>でください。</li>
-                <li><strong>10分間操作がないと自動で退室</strong>します。（再度入室し直してください）</li>
-                <li>ブラウザや通信が切れたあと <strong>10分以内に戻った場合は「入室しました」の通知が出ない</strong>ことがあります。</li>
-                <li>このチャットはテスト運用中です。不具合などもあるかと思いますがご容赦ください。</li>
-            </ul>
-        </div>
-
-        <div id="chatLog"></div>
-
-        <div class="footer">
-            <!-- 入室前に使う名前＋入室ボタン -->
-            <div class="name-row" id="joinRow">
-                <input id="nameInput" type="text" placeholder="名前を入力" />
-                <button id="joinBtn">入室</button>
-            </div>
-
-            <!-- 吹き出しの色を選ぶ行（入室前の主役・入室後は再利用） -->
-            <div class="color-row">
-                <span class="color-label">吹き出し色：</span>
-
-                <label>
-                    <input type="radio" name="bubbleColor" value="#FFEBEE" checked>
-                    <span class="color-swatch color-pink"></span>
-                </label>
-                <label>
-                    <input type="radio" name="bubbleColor" value="#E3F2FD">
-                    <span class="color-swatch color-blue"></span>
-                </label>
-                <label>
-                    <input type="radio" name="bubbleColor" value="#E8F5E9">
-                    <span class="color-swatch color-green"></span>
-                </label>
-                <label>
-                    <input type="radio" name="bubbleColor" value="#FFF3E0">
-                    <span class="color-swatch color-orange"></span>
-                </label>
-            </div>
-
-            <!-- メッセージ入力（入室後の主役） -->
-            <div class="input-row">
-                <input id="msgInput" type="text" placeholder="メッセージを入力" disabled />
-                <button id="sendBtn" disabled>送信</button>
-            </div>
-
-            <!-- 定型文ボタン・ダイスボタン（入室後に使う） -->
-            <div class="template-row">
-                <button class="template-btn" data-text="逝きそうです…♡" disabled>寸止め</button>
-                <button class="template-btn" data-text="逝きました…♡" disabled>絶頂</button>
-                <button id="roll2d6Btn" class="dice-btn" disabled>🎲</button>
-                <button id="topicRouletteBtn" class="dice-btn" disabled>お仕置きガチャ</button>
-
-            </div>
-
-            <!-- 入室後だけ見える小さなコントロール -->
-            <div class="after-join-controls">
-                <button id="renameBtn" disabled>名前変更</button>
-                <!-- ★ 吹き出し色変更ボタンを追加 -->
-                <button id="openColorChangeBtn" disabled>色変更</button>
-                <button id="leaveBtn" disabled>退室</button>
-            </div>
-
-            <!-- ★ 入室後の色変更UI（初期は非表示） -->
-            <div id="colorChangeArea" style="display: none;">
-                <div id="colorChangeWrapper" class="color-change-row"></div>
-            </div>
-
-
-            <div id="typingInfo"></div>
-        </div>
+    <div id="chatInfoBeforeJoin">
+      ※ 入室すると、この下にチャットが表示されます。
     </div>
 
-    <aside class="sidebar">
-        <h3>オンライン（最大10人）</h3>
-        <div id="userList">誰もいません</div>
-    </aside>
-
-    <!-- ★ スマホ用：オンライン一覧ポップアップ（※scriptより上に置く） -->
-    <div id="mobileUserOverlay" class="mobile-user-overlay">
-        <div class="mobile-user-panel">
-            <div class="mobile-user-header">
-                <span>オンライン一覧</span>
-                <button id="mobileUserClose" class="mobile-user-close">✕</button>
-            </div>
-            <div id="mobileUserList" class="mobile-user-list">
-                誰もいません
-            </div>
-        </div>
+    <div class="chat-notice" id="preLoginNotice">
+      <p class="chat-notice-title">⚠ ご利用上の注意</p>
+      <ul class="chat-notice-list">
+        <li>電話番号・メールアドレス・SNS ID などの <strong>個人情報は書き込まない</strong> でください。</li>
+        <li>LINE や X（Twitter）など、<strong>外部サービスのID交換はしない</strong>でください。</li>
+        <li><strong>10分間操作がないと自動で退室</strong>します。（再度入室し直してください）</li>
+        <li>ブラウザや通信が切れたあと <strong>10分以内に戻った場合は「入室しました」の通知が出ない</strong>ことがあります。</li>
+        <li>このチャットはテスト運用中です。不具合などもあるかと思いますがご容赦ください。</li>
+      </ul>
     </div>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script>
-        // ★ ブラウザごとのクライアントIDを発行・保存
-        let clientId = localStorage.getItem("chatClientId");
-        if (!clientId) {
-            clientId = "c-" + Math.random().toString(36).slice(2);
-            localStorage.setItem("chatClientId", clientId);
-        }
-
-        /* ユーザーごとの色決定 ------------------ */
-        function hashStringToNumber(str) {
-            let hash = 0;
-            for (let i = 0; i < str.length; i++) {
-                hash = ((hash << 5) - hash) + str.charCodeAt(i);
-                hash |= 0;
-            }
-            return Math.abs(hash);
-        }
-
-        function getColorForName(name) {
-            const colors = [
-                "#FFEBEE", "#FFF3E0", "#FFFDE7", "#E8F5E9",
-                "#E3F2FD", "#F3E5F5", "#E0F7FA", "#FBE9E7"
-            ];
-            if (!name) return "#FFFFFF";
-            const num = hashStringToNumber(name);
-            const index = num % colors.length;
-            return colors[index];
-        }
-
-        function darkenColor(hex, amount = 0.35) {
-            const num = parseInt(hex.replace("#", ""), 16);
-            let r = (num >> 16) & 255;
-            let g = (num >> 8) & 255;
-            let b = num & 255;
-
-            r = Math.floor(r * (1 - amount));
-            g = Math.floor(g * (1 - amount));
-            b = Math.floor(b * (1 - amount));
-
-            return "#" + ((1 << 24) + (r << 16) + (g << 8) + b)
-                .toString(16)
-                .slice(1);
-        }
-
-        function applyColorChange() {
-            if (!joined) return;
-
-            const selected = document.querySelector('input[name="bubbleColor"]:checked');
-            const newColor = selected ? selected.value : pendingColor || currentColor;
-
-            if (!newColor) return;
-
-            currentColor   = newColor;
-            lastKnownColor = newColor;
-
-            socket.emit("change-color", newColor);
-
-            closeColorChangeUI();
-        }
-
-
-        function cancelColorChange() {
-            pendingColor = null;
-            closeColorChangeUI();
-        }
-
-        function closeColorChangeUI() {
-            colorChangeArea.style.display = "none";
-
-            // ラジオを footer に戻す（上に戻るが hidden）
-            footer.insertBefore(colorRow, inputRow);
-
-            if (joined) {
-                colorRow.style.display = "none";
-            }
-
-            // UIを空にする
-            colorChangeWrapper.innerHTML = "";
-        }
-
-
-
-        /* 要素取得 ------------------------------ */
-        const socket            = io();
-        const nameInput         = document.getElementById("nameInput");
-        const joinBtn           = document.getElementById("joinBtn");
-        const renameBtn         = document.getElementById("renameBtn");
-        const leaveBtn          = document.getElementById("leaveBtn");
-        const openColorChangeBtn = document.getElementById("openColorChangeBtn");
-        const msgInput          = document.getElementById("msgInput");
-        const sendBtn           = document.getElementById("sendBtn");
-        const chatLog           = document.getElementById("chatLog");
-        const userListDiv       = document.getElementById("userList");
-        const typingInfo        = document.getElementById("typingInfo");
-        const statusText        = document.getElementById("statusText");
-        const joinRow           = document.getElementById("joinRow");
-        const afterJoinControls = document.querySelector(".after-join-controls");
-        const inputRow          = document.querySelector(".input-row");
-        const infoBeforeJoin    = document.getElementById("chatInfoBeforeJoin");
-        const preLoginNotice    = document.getElementById("preLoginNotice");
-        const templateButtons   = document.querySelectorAll(".template-btn");
-        const mobileUserBtn     = document.getElementById("mobileUserBtn");
-        const mobileUserOverlay = document.getElementById("mobileUserOverlay");
-        const mobileUserClose   = document.getElementById("mobileUserClose");
-        const mobileUserList    = document.getElementById("mobileUserList");
-        const roll2d6Btn        = document.getElementById("roll2d6Btn"); 
-        const topicRouletteBtn  = document.getElementById("topicRouletteBtn");
-        const mobileMenuBtn        = document.getElementById("mobileMenuBtn");
-        const mobileMenu           = document.getElementById("mobileMenu");
-        const mobileMenuUserListBtn    = document.getElementById("mobileMenuUserListBtn");
-        const mobileMenuChangeNameBtn  = document.getElementById("mobileMenuChangeNameBtn");
-        const mobileMenuLeaveBtn       = document.getElementById("mobileMenuLeaveBtn");
-        const mobileMenuColorBtn       = document.getElementById("mobileMenuColorBtn");
-        const footer            = document.querySelector(".footer");
-        const colorRow          = document.querySelector(".color-row");
-        const colorChangeArea   = document.getElementById("colorChangeArea");
-        const colorChangeWrapper = document.getElementById("colorChangeWrapper");
-
-        // -----------------------------
-        // ハンバーガーメニュー 開閉
-        // -----------------------------
-        function closeMobileMenu() {
-            if (mobileMenu && mobileMenuBtn) {
-                mobileMenu.classList.remove("open");
-                mobileMenuBtn.classList.remove("open");
-                mobileMenuBtn.setAttribute("aria-expanded", "false");
-            }
-        }
-
-        if (mobileMenuBtn && mobileMenu) {
-            mobileMenuBtn.addEventListener("click", () => {
-                const isOpen = mobileMenu.classList.toggle("open");
-                mobileMenuBtn.classList.toggle("open", isOpen);
-                mobileMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
-            });
-        }
-
-        // 「オンライン一覧」 → スマホ用オーバーレイを開く
-        if (mobileMenuUserListBtn && mobileUserOverlay) {
-            mobileMenuUserListBtn.addEventListener("click", () => {
-                mobileUserOverlay.style.display = "flex";
-                closeMobileMenu();
-            });
-        }
-
-        // 「名前変更」 → footer の renameBtn をそのまま呼び出す
-        if (mobileMenuChangeNameBtn && renameBtn) {
-            mobileMenuChangeNameBtn.addEventListener("click", () => {
-                renameBtn.click();
-                closeMobileMenu();
-            });
-        }
-
-        // 「色変更」 → footer の openColorChangeBtn を呼び出す
-        if (mobileMenuColorBtn && openColorChangeBtn) {
-            mobileMenuColorBtn.addEventListener("click", () => {
-                openColorChangeBtn.click();  // 既存の色変更UIを起動
-                closeMobileMenu();
-            });
-        }
-
-        // 「退室」 → footer の leaveBtn をそのまま呼び出す
-        if (mobileMenuLeaveBtn && leaveBtn) {
-            mobileMenuLeaveBtn.addEventListener("click", () => {
-                leaveBtn.click();
-                closeMobileMenu();
-            });
-        }
-
-        // 吹き出し色のラジオボタン
-        const colorInputs = document.querySelectorAll('input[name="bubbleColor"]');
-
-        // 現在選択している色（入室済みの実際の色）
-        let currentColor = (() => {
-            const checked = document.querySelector('input[name="bubbleColor"]:checked');
-            return checked ? checked.value : null;
-        })();
-
-        // 色変更ダイアログ内で一時的に選んだ色
-        let pendingColor = null;
-
-        // 状態
-        let joined          = false;
-        let mySocketId      = null;
-        let typingTimeout   = null;
-        let isTyping        = false;
-        let shouldAutoJoin  = false;          // 「今後も自動で再入室していいか」
-        let lastKnownName   = "";            // 最後に使っていた名前
-        let lastKnownColor  = currentColor;  // 最後に選んでいた吹き出し色
-
-        /* 吹き出し色のラジオ操作 ----------------
-           入室前：そのまま currentColor を変える
-           入室後：ダイアログ内で選んだ値として pendingColor に入れておく
-        ---------------------------------------- */
-        colorInputs.forEach(input => {
-            input.addEventListener("change", () => {
-                const val = input.value;
-                if (!joined) {
-                    // 入室前はそのまま現在色に反映
-                    currentColor   = val;
-                    lastKnownColor = currentColor;
-                } else {
-                    // 入室後はダイアログでの一時選択として保持
-                    pendingColor = val;
-                }
-            });
-        });
-
-        /* ユーティリティ ------------------------ */
-        function trimChatLog() {
-            const max = 50;
-            while (chatLog.children.length > max) {
-                chatLog.removeChild(chatLog.lastElementChild);
-            }
-        }
-
-        function setTyping(flag) {
-            if (isTyping === flag) return;
-            isTyping = flag;
-            socket.emit("typing", isTyping);
-        }
-
-        /* Socket.io イベント -------------------- */
-        socket.on("connect", () => {
-            mySocketId = socket.id;
-
-            // ★ 以前「入室中」で、かつ自動再入室が許可されている場合は自動で join し直す
-            if (joined && shouldAutoJoin) {
-                const fallbackName  = nameInput.value.trim() || "";
-                const sendName      = lastKnownName || fallbackName;
-                const sendColor     = lastKnownColor || currentColor || null;
-
-                socket.emit("join", {
-                    name:  sendName,
-                    color: sendColor,
-                    clientId  // ★ 再接続時も clientId を送る
-                });
-            }
-        });
-
-        socket.on("room-full", () => {
-            alert("この部屋は満員です（10人まで）");
-        });
-
-        socket.on("system-message", ({ time, text }) => {
-            const div = document.createElement("div");
-            div.className = "system-message";
-            div.textContent = `[${time}] ${text}`;
-            chatLog.append(div);
-            trimChatLog();
-            chatLog.scrollTop = chatLog.scrollHeight;  // ← 修正
-        });
-
-
-        // 入室時に送られてくる過去ログ
-        socket.on("chat-log", (logs) => {
-
-            // ★ そのまま順番通りに追加（古い→新しい）
-            for (let i = 0; i < logs.length; i++) {
-                const item = logs[i];
-
-                // ▼ ガチャログ
-                if (item.type === "topic") {
-                    const wrapper = document.createElement("div");
-                    wrapper.className = "system-message topic-message";
-
-                    wrapper.innerHTML = `
-                        <div class="topic-header">
-                            <span class="topic-label">お仕置きガチャ</span>
-                            <span class="topic-meta">[${item.time}] ${item.name}さんが引きました</span>
-                        </div>
-                        <div class="topic-body">
-                            ${item.topic}
-                        </div>
-                    `;
-                    chatLog.append(wrapper);     // ←ここを append に
-                    continue;
-                }
-
-                // ▼ 通常メッセージ
-                const row = document.createElement("div");
-                row.className = "message-row other";
-
-                const meta = document.createElement("div");
-                meta.className = "message-meta";
-                meta.textContent = `[${item.time}] ${item.name}`;
-
-                const msgDiv = document.createElement("div");
-                msgDiv.className = "message message-other";
-                msgDiv.textContent = item.text;
-
-                const userColor = item.color || getColorForName(item.name);
-                msgDiv.style.backgroundColor = userColor;
-                msgDiv.style.setProperty("--bubble-color", userColor);
-                meta.style.color = darkenColor(userColor, 0.35);
-
-                row.appendChild(meta);
-                row.appendChild(msgDiv);
-
-                chatLog.append(row);  // ← 最新が下に来る
-            }
-
-            if (typeof trimChatLog === "function") {
-                trimChatLog();
-            }
-
-            // 下までスクロール
-            chatLog.scrollTop = chatLog.scrollHeight;
-        });
-
-
-
-
-        // 通常メッセージ
-        socket.on("chat-message", ({ time, name, text, fromId, color }) => {
-            const row = document.createElement("div");
-            const isSelf = (fromId === mySocketId);
-            row.className = "message-row " + (isSelf ? "self" : "other");
-
-            const meta = document.createElement("div");
-            meta.className = "message-meta";
-            meta.textContent = `[${time}] ${name}`;
-
-            const msgDiv = document.createElement("div");
-            msgDiv.className = "message " + (isSelf ? "message-self" : "message-other");
-            msgDiv.textContent = text;
-
-            const userColor = color || getColorForName(name);
-
-            msgDiv.style.backgroundColor = userColor;
-            msgDiv.style.setProperty("--bubble-color", userColor);
-            meta.style.color = darkenColor(userColor, 0.35);
-
-            row.appendChild(meta);
-            row.appendChild(msgDiv);
-
-            chatLog.append(row);
-            trimChatLog();
-            chatLog.scrollTop = chatLog.scrollHeight;
-        });
-
-        // お題ガチャの結果 ------------------------
-        socket.on("topic-result", ({ time, topic, drawnBy }) => {
-            const wrapper = document.createElement("div");
-            wrapper.className = "system-message topic-message";
-
-            wrapper.innerHTML = `
-                <div class="topic-header">
-                    <span class="topic-label">お仕置きガチャ</span>
-                    <span class="topic-meta">[${time}] ${drawnBy}さんが引きました</span>
-                </div>
-                <div class="topic-body">
-                    ${topic}   <!-- ← ここは .text とかにしないでOK -->
-                </div>
-            `;
-
-            chatLog.append(wrapper);
-            trimChatLog();
-            chatLog.scrollTop = chatLog.scrollHeight; 
-        });
-
-
-        // 連投しすぎの警告（サーバー側で rate-limit を emit している場合用）
-        socket.on("rate-limit", ({ waitMs }) => {
-            const sec = Math.ceil(waitMs / 1000);
-            typingInfo.textContent = `送信間隔が短すぎます。あと ${sec} 秒待ってください。`;
-
-            setTimeout(() => {
-                if (typingInfo.textContent.startsWith("送信間隔が短すぎます")) {
-                    typingInfo.textContent = "";
-                }
-            }, 2000);
-        });
-
-        // オンラインユーザー
-        socket.on("user-list", (names) => {
-            if (names.length === 0) {
-                userListDiv.textContent = "誰もいません";
-                statusText.textContent = joined ? "オンライン: 0 / 10" : "未入室";
-                if (mobileUserList) mobileUserList.textContent = "誰もいません";
-                return;
-            }
-
-            userListDiv.innerHTML = names.map(n => `・${n}`).join("<br>");
-
-            if (joined) {
-                statusText.textContent = `オンライン: ${names.length} / 10`;
-            } else {
-                statusText.textContent = `未入室（オンライン: ${names.length} / 10）`;
-            }
-
-            // モバイル用ポップアップ側の表示も同期
-            if (mobileUserList) {
-                mobileUserList.innerHTML = names
-                    .map(n => `・${n}`)
-                    .join("<br>");
-            }
-        });
-
-        // 入力中ユーザー一覧
-        socket.on("typing-users", (names) => {
-            if (!names || names.length === 0) {
-                typingInfo.textContent = "";
-                return;
-            }
-            const text = (names.length === 1)
-                ? `${names[0]}さんが入力中…`
-                : `${names.join("さん、")}さんが入力中…`;
-            typingInfo.textContent = text;
-        });
-
-        /* 入室・退室・名前変更 ------------------ */
-        joinBtn.addEventListener("click", () => {
-            if (joined) return;
-
-            const name  = nameInput.value.trim() || "";
-
-            // 念のため現在のチェックから色を拾う
-            const checked = document.querySelector('input[name="bubbleColor"]:checked');
-            currentColor = checked ? checked.value : currentColor;
-            const color = currentColor;
-
-            // name / color / clientId をまとめて送る
-            socket.emit("join", { name, color, clientId });
-
-            // ★ 自動再入室ON & 今回の情報を覚えておく
-            shouldAutoJoin = true;
-            if (name) {
-                lastKnownName = name;
-            }
-            lastKnownColor = color;
-
-            joined = true;
-
-            // メッセージ入力ボックスを表示
-            inputRow.style.display = "flex";
-
-
-            // 入室したら上の色行を隠す
-            if (colorRow) {
-                colorRow.style.display = "none";
-            }
-
-            // 見た目の状態切り替え
-            document.body.classList.add("joined");
-            joinRow.style.display = "none";
-            joinBtn.disabled = true;
-            joinBtn.style.display = "none";
-
-            renameBtn.disabled = false;
-            leaveBtn.disabled  = false;
-            openColorChangeBtn.disabled = false;
-            afterJoinControls.style.display = "flex";
-
-            msgInput.disabled = false;
-            sendBtn.disabled  = false;
-
-            // ダイスボタンも有効化
-            if (roll2d6Btn) roll2d6Btn.disabled = false;
-
-            // ★ お題ガチャボタンも無効化
-            if (topicRouletteBtn) topicRouletteBtn.disabled = false;
-
-            // 定型文ボタンを入室後に有効化して表示
-            document.querySelector(".template-row").style.display = "flex";
-            templateButtons.forEach(btn => btn.disabled = false);
-
-            if (infoBeforeJoin) infoBeforeJoin.style.display = "none";
-            if (preLoginNotice) preLoginNotice.style.display = "none";
-            chatLog.style.display = "block";
-
-            if (!name) {
-                nameInput.placeholder = "名前はあとから変更できます";
-            }
-        });
-
-        nameInput.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-                joinBtn.click();
-            }
-        });
-
-        renameBtn.addEventListener("click", () => {
-            const current = nameInput.value.trim() || "";
-            const newName = prompt("新しい名前を入力してください", current);
-            if (!newName) return;
-            const trimmed = newName.trim();
-            if (!trimmed || trimmed === current) return;
-
-            socket.emit("change-name", trimmed);
-            nameInput.value = trimmed;
-
-            // 自動再入室用の名前も更新しておく
-            lastKnownName = trimmed;
-        });
-
-        leaveBtn.addEventListener("click", () => {
-            if (!joined) return;
-
-            socket.emit("leave");
-
-            // メッセージ入力欄を非表示
-            inputRow.style.display = "none";
-
-            joined = false;
-            document.body.classList.remove("joined");
-
-            joinRow.style.display = "flex";
-            joinBtn.disabled = false;
-            joinBtn.style.display = "inline-block";
-
-            renameBtn.disabled = true;
-            leaveBtn.disabled  = true;
-            openColorChangeBtn.disabled = true;
-            afterJoinControls.style.display = "none";
-
-            msgInput.disabled = true;
-            sendBtn.disabled  = true;
-
-            // ダイスボタンも無効化
-            if (roll2d6Btn) roll2d6Btn.disabled = true;
-
-            // ★ お題ガチャボタンも無効化
-            if (topicRouletteBtn) topicRouletteBtn.disabled = true;
-
-
-            // 退室時：定型文ボタンを無効化＋非表示
-            document.querySelector(".template-row").style.display = "none";
-            templateButtons.forEach(btn => btn.disabled = true);
-
-            if (infoBeforeJoin) infoBeforeJoin.style.display = "block";
-            if (preLoginNotice) preLoginNotice.style.display = "block";
-            chatLog.style.display = "none";
-
-            chatLog.innerHTML = "";
-            typingInfo.textContent = "";
-            statusText.textContent = "未入室";
-
-            // ★ 色変更UIを閉じてパネルを元に戻す
-            pendingColor = null;
-            colorChangeArea.style.display = "none";
-            if (footer && colorRow && inputRow) {
-                footer.insertBefore(colorRow, inputRow);
-                // ★ 未入室に戻ったので、上で見えるようにする
-                colorRow.style.display = "flex";
-            }
-
-        });
-
-        /* 吹き出し色変更UI（入室後専用） --------- */
-        openColorChangeBtn.addEventListener("click", () => {
-            if (!joined) return;
-
-            // 現在色を反映
-            const baseColor = currentColor || lastKnownColor;
-            if (baseColor) {
-                colorInputs.forEach(input => {
-                    input.checked = (input.value === baseColor);
-                });
-                pendingColor = baseColor;
-            }
-
-            // color-row を UI に移動
-            colorChangeWrapper.appendChild(colorRow);
-            colorRow.style.display = "flex";
-
-            // ★ 決定 / キャンセルボタンを横並びで追加
-            const applyBtn = document.createElement("button");
-            applyBtn.id = "applyColorChangeBtn";
-            applyBtn.textContent = "決定";
-            applyBtn.classList.add("color-change-btn");
-
-            const cancelBtn = document.createElement("button");
-            cancelBtn.id = "cancelColorChangeBtn";
-            cancelBtn.textContent = "キャンセル";
-            cancelBtn.classList.add("color-change-btn");
-
-            colorChangeWrapper.appendChild(applyBtn);
-            colorChangeWrapper.appendChild(cancelBtn);
-
-            colorChangeArea.style.display = "block";
-
-            // ボタンのイベント設定
-            applyBtn.addEventListener("click", applyColorChange);
-            cancelBtn.addEventListener("click", cancelColorChange);
-        });
-
-
-
-        /* メッセージ入力 ------------------------ */
-        sendBtn.addEventListener("click", () => {
-            const text = msgInput.value.trim();
-            if (!text) return;
-            socket.emit("send-message", text);
-            msgInput.value = "";
-            setTyping(false);
-        });
-
-        // ダイスボタン（2D6） ------------------------
-        if (roll2d6Btn) {
-            roll2d6Btn.addEventListener("click", () => {
-                if (!joined) return;  // 念のため未入室時ガード
-                socket.emit("roll-dice"); // サーバーに「振って」とお願い
-            });
-        }
-
-        // お題ガチャボタン ------------------------
-        if (topicRouletteBtn) {
-            topicRouletteBtn.addEventListener("click", () => {
-                if (!joined) return;  // 未入室では使えない
-                socket.emit("draw-topic");
-            });
-        }
-
-
-        msgInput.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-                sendBtn.click();
-            } else {
-                setTyping(true);
-            }
-        });
-
-        msgInput.addEventListener("keyup", () => {
-            if (typingTimeout) clearTimeout(typingTimeout);
-            typingTimeout = setTimeout(() => {
-                setTyping(false);
-            }, 1500);
-        });
-
-        // 定型文ボタンを押したらメッセージ送信
-        templateButtons.forEach(btn => {
-            btn.addEventListener("click", () => {
-                const text = btn.dataset.text;
-                socket.emit("send-message", text);
-            });
-        });
-
-        // スマホ用：オンライン一覧モーダルの開閉
-        if (mobileUserBtn && mobileUserOverlay) {
-            mobileUserBtn.addEventListener("click", () => {
-                mobileUserOverlay.style.display = "flex";
-            });
-        }
-
-        if (mobileUserClose && mobileUserOverlay) {
-            mobileUserClose.addEventListener("click", () => {
-                mobileUserOverlay.style.display = "none";
-            });
-        }
-
-        // モーダルの背景をタップしたら閉じる
-        if (mobileUserOverlay) {
-            mobileUserOverlay.addEventListener("click", (e) => {
-                if (e.target === mobileUserOverlay) {
-                    mobileUserOverlay.style.display = "none";
-                }
-            });
-        }
-
-        // 自動退室（サーバー側からの強制退室通知）
-        socket.on("force-leave", ({ reason }) => {
-            if (!joined) return;
-
-            joined = false;
-            document.body.classList.remove("joined");
-
-            // ★ 自動退室のときは自動再入室は無効化
-            shouldAutoJoin = false;
-            lastKnownName  = "";
-            lastKnownColor = null;
-
-            inputRow.style.display = "none";
-
-            joinRow.style.display = "flex";
-            joinBtn.disabled = false;
-            joinBtn.style.display = "inline-block";
-
-            renameBtn.disabled = true;
-            leaveBtn.disabled  = true;
-            openColorChangeBtn.disabled = true;
-            afterJoinControls.style.display = "none";
-
-            msgInput.disabled = true;
-            sendBtn.disabled  = true;
-
-            document.querySelector(".template-row").style.display = "none";
-            document.querySelectorAll(".template-btn").forEach(btn => btn.disabled = true);
-
-            // ダイスボタンも無効化
-            if (roll2d6Btn) roll2d6Btn.disabled = true; 
-
-            // ★ お題ガチャボタンも無効化
-            if (topicRouletteBtn) topicRouletteBtn.disabled = true;
-
-            if (infoBeforeJoin) infoBeforeJoin.style.display = "block";
-            if (preLoginNotice) preLoginNotice.style.display = "block";
-            chatLog.style.display = "none";
-            chatLog.innerHTML = "";
-
-            typingInfo.textContent = "";
-            statusText.textContent = "未入室";
-
-            // ★ 色変更UIを閉じてパネルを元に戻す
-            pendingColor = null;
-            colorChangeArea.style.display = "none";
-            if (footer && colorRow && inputRow) {
-                footer.insertBefore(colorRow, inputRow);
-                // ★ 未入室状態なので表示
-                colorRow.style.display = "flex";
-            }
-
-
-            alert("10分間操作がなかったため、自動的に退室しました。");
-        });
-    </script>
+    <div id="chatLog"></div>
+
+    <div class="footer">
+      <div class="name-row" id="joinRow">
+        <input id="nameInput" type="text" placeholder="名前を入力" />
+        <button id="joinBtn">入室</button>
+      </div>
+
+      <div class="color-row">
+        <span class="color-label">吹き出し色：</span>
+
+        <label>
+          <input type="radio" name="bubbleColor" value="#FFEBEE" checked>
+          <span class="color-swatch color-pink"></span>
+        </label>
+        <label>
+          <input type="radio" name="bubbleColor" value="#E3F2FD">
+          <span class="color-swatch color-blue"></span>
+        </label>
+        <label>
+          <input type="radio" name="bubbleColor" value="#E8F5E9">
+          <span class="color-swatch color-green"></span>
+        </label>
+        <label>
+          <input type="radio" name="bubbleColor" value="#FFF3E0">
+          <span class="color-swatch color-orange"></span>
+        </label>
+      </div>
+
+      <div class="input-row">
+        <input id="msgInput" type="text" placeholder="メッセージを入力" disabled />
+        <button id="sendBtn" disabled>送信</button>
+      </div>
+
+      <div class="template-row">
+        <button class="template-btn" data-text="逝きそうです…♡" disabled>寸止め</button>
+        <button class="template-btn" data-text="逝きました…♡" disabled>絶頂</button>
+        <button id="roll2d6Btn" class="dice-btn" disabled>🎲</button>
+        <button id="topicRouletteBtn" class="dice-btn" disabled>お仕置きガチャ</button>
+      </div>
+
+      <div class="after-join-controls">
+        <button id="renameBtn" disabled>名前変更</button>
+        <button id="openColorChangeBtn" disabled>色変更</button>
+        <button id="leaveBtn" disabled>退室</button>
+      </div>
+
+      <div id="colorChangeArea" style="display:none;">
+        <div id="colorChangeWrapper" class="color-change-row"></div>
+      </div>
+
+      <div id="typingInfo"></div>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <h3>オンライン（最大10人）</h3>
+    <div id="userList">誰もいません</div>
+  </aside>
+
+  <div id="mobileUserOverlay" class="mobile-user-overlay">
+    <div class="mobile-user-panel">
+      <div class="mobile-user-header">
+        <span>オンライン一覧</span>
+        <button id="mobileUserClose" class="mobile-user-close">✕</button>
+      </div>
+      <div id="mobileUserList" class="mobile-user-list">誰もいません</div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/client.js"></script>
 </body>
 </html>

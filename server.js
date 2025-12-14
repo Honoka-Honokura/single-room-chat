@@ -3,7 +3,13 @@ const express = require("express");
 const app = express();
 const http = require("http").createServer(app);
 const { Server } = require("socket.io");
-const io = new Server(http);
+
+// ★ Socket.io：スマホ/タブ切替での不安定さを少しでも軽減
+const io = new Server(http, {
+    pingInterval: 20000,
+    pingTimeout: 20000,
+    transports: ["websocket", "polling"]
+});
 
 // ★ お題ガチャ用のモジュール（永続化＋編集・削除対応）
 const {
@@ -34,6 +40,13 @@ const typingUsers = new Set();
 // チャットログ（メモリ上に一時保存）
 const chatLog = [];
 
+// ★ ログに連番IDを付ける（ポーリングの差分取得に使う）
+let nextMessageId = 1;
+
+// ★ ロングポーリング待機者
+const pollWaiters = new Set(); // { sinceId, res, timer }
+const POLL_TIMEOUT_MS = 25000; // 25秒（ルブル寄り）
+
 // 最大人数
 const MAX_USERS = 10;
 
@@ -48,22 +61,6 @@ const lastActionTimeByClientId = {};
 
 // ★ お題ガチャ専用：clientId ごとの最後のガチャ時間
 const lastTopicTimeByClientId = {};
-
-// 共通の連投チェック関数
-function checkRateLimit(clientId) {
-    if (!clientId) return 0;
-
-    const now  = Date.now();
-    const last = lastActionTimeByClientId[clientId] || 0;
-    const diff = now - last;
-
-    if (diff < MIN_INTERVAL_MS) {
-        return MIN_INTERVAL_MS - diff;
-    }
-
-    lastActionTimeByClientId[clientId] = now;
-    return 0;
-}
 
 // ★ socket.id → clientId の対応
 const socketClientIds = {};
@@ -135,12 +132,60 @@ function touchActivity(socketId) {
     lastActivityTimes[socketId] = Date.now();
 }
 
+// 時刻文字列
 function getTimeString() {
     return new Date().toLocaleTimeString("ja-JP", {
         timeZone: "Asia/Tokyo",
         hour: "2-digit",
         minute: "2-digit"
     });
+}
+
+// 共通の連投チェック関数
+function checkRateLimit(clientId) {
+    if (!clientId) return 0;
+
+    const now = Date.now();
+    const last = lastActionTimeByClientId[clientId] || 0;
+    const diff = now - last;
+
+    if (diff < MIN_INTERVAL_MS) {
+        return MIN_INTERVAL_MS - diff;
+    }
+
+    lastActionTimeByClientId[clientId] = now;
+    return 0;
+}
+
+// ★ chatLogに追加しつつ、ロングポーリング待機者にも配る
+function pushLog(entry) {
+    const e = {
+        id: nextMessageId++,
+        ...entry
+    };
+
+    chatLog.push(e);
+    if (chatLog.length > 50) chatLog.shift();
+
+    // ロングポーリング待機者に新着を返す
+    for (const w of Array.from(pollWaiters)) {
+        const news = chatLog.filter(m => m.id > w.sinceId);
+        if (news.length > 0) {
+            clearTimeout(w.timer);
+            pollWaiters.delete(w);
+            w.res.json({ ok: true, messages: news, serverTime: Date.now() });
+        }
+    }
+
+    return e;
+}
+
+// ★ system-message を「socket通知 + ログ追加」で統一
+function emitSystem(text) {
+    const time = getTimeString();
+    pushLog({ type: "system", time, text, color: null });
+
+    io.to(ROOM_NAME).emit("system-message", { time, text });
 }
 
 function broadcastUserList() {
@@ -184,10 +229,7 @@ setInterval(() => {
             s.emit("force-leave", { reason: "timeout" });
         }
 
-        io.to(ROOM_NAME).emit("system-message", {
-            time: getTimeString(),
-            text: `「${leftName}」さんは一定時間操作がなかったため退室しました。`
-        });
+        emitSystem(`「${leftName}」さんは一定時間操作がなかったため退室しました。`);
 
         broadcastUserList();
         broadcastTypingUsers();
@@ -254,7 +296,11 @@ app.put("/api/topics/:id", (req, res) => {
 
 // 削除
 app.delete("/api/topics/:id", (req, res) => {
-    const password = req.query.password || req.headers["x-admin-password"] || (req.body && req.body.password);
+    const password =
+        req.query.password ||
+        req.headers["x-admin-password"] ||
+        (req.body && req.body.password);
+
     if (password !== ADMIN_PASSWORD) {
         return res.status(403).json({ error: "forbidden" });
     }
@@ -271,6 +317,43 @@ app.delete("/api/topics/:id", (req, res) => {
         console.error("Failed to delete topic:", err);
         res.status(400).json({ error: err.message || "bad request" });
     }
+});
+
+// ===========================
+// ★ ロングポーリング用API（ルブル寄り）
+// ===========================
+
+// 初回：最新ログ取得
+app.get("/api/log", (req, res) => {
+    res.json({ ok: true, messages: chatLog, serverTime: Date.now() });
+});
+
+// 差分：新着が来るまで最大25秒待つ
+app.get("/api/poll", (req, res) => {
+    const sinceId = Number(req.query.since || 0);
+
+    // 既に新着があるなら即返す
+    const news = chatLog.filter(m => m.id > sinceId);
+    if (news.length > 0) {
+        return res.json({ ok: true, messages: news, serverTime: Date.now() });
+    }
+
+    // なければ待つ
+    const waiter = {
+        sinceId,
+        res,
+        timer: setTimeout(() => {
+            pollWaiters.delete(waiter);
+            res.json({ ok: true, messages: [], serverTime: Date.now() });
+        }, POLL_TIMEOUT_MS)
+    };
+    pollWaiters.add(waiter);
+
+    // 途中でクライアントが切れたら掃除
+    req.on("close", () => {
+        clearTimeout(waiter.timer);
+        pollWaiters.delete(waiter);
+    });
 });
 
 // ===========================
@@ -292,21 +375,19 @@ io.on("connection", (socket) => {
             return;
         }
 
-        let rawName  = "";
-        let color    = null;
+        let rawName = "";
+        let color = null;
         let clientId = null;
 
         if (typeof payload === "string" || payload === undefined || payload === null) {
             rawName = payload || "";
         } else {
-            rawName  = payload.name  || "";
-            color    = payload.color || null;
+            rawName = payload.name || "";
+            color = payload.color || null;
             clientId = payload.clientId || null;
         }
 
-        if (!clientId) {
-            clientId = socket.id;
-        }
+        if (!clientId) clientId = socket.id;
 
         socketClientIds[socket.id] = clientId;
 
@@ -314,10 +395,7 @@ io.on("connection", (socket) => {
             ? rawName.trim()
             : "user-" + Math.floor(Math.random() * 1000);
 
-        users[socket.id] = {
-            name:  displayName,
-            color: color
-        };
+        users[socket.id] = { name: displayName, color };
         socket.join(ROOM_NAME);
 
         console.log(displayName, "joined (clientId:", clientId, ")");
@@ -331,13 +409,10 @@ io.on("connection", (socket) => {
         }
 
         if (shouldAnnounceJoin) {
-            io.to(ROOM_NAME).emit("system-message", {
-                time: getTimeString(),
-                text: `「${displayName}」さんが入室しました。`
-            });
+            emitSystem(`「${displayName}」さんが入室しました。`);
         }
 
-        // 過去ログ（topic含む）をそのまま送る
+        // 過去ログを送る（id付きで入ってる）
         if (chatLog.length > 0) {
             socket.emit("chat-log", chatLog);
         }
@@ -358,11 +433,7 @@ io.on("connection", (socket) => {
         user.name = trimmed;
         touchActivity(socket.id);
 
-        io.to(ROOM_NAME).emit("system-message", {
-            time: getTimeString(),
-            text: `「${oldName}」さんは名前を「${trimmed}」に変更しました。`
-        });
-
+        emitSystem(`「${oldName}」さんは名前を「${trimmed}」に変更しました。`);
         broadcastUserList();
     });
 
@@ -377,10 +448,7 @@ io.on("connection", (socket) => {
         user.color = color;
         touchActivity(socket.id);
 
-        io.to(ROOM_NAME).emit("system-message", {
-            time: getTimeString(),
-            text: `「${user.name}」さんが吹き出し色を変更しました。`
-        });
+        emitSystem(`「${user.name}」さんが吹き出し色を変更しました。`);
     });
 
     // メッセージ送信
@@ -447,18 +515,16 @@ io.on("connection", (socket) => {
 
         const time = getTimeString();
 
-        const logEntry = {
+        const saved = pushLog({
+            type: "chat",
             time,
             name: user.name,
             text,
             color: user.color || null
-        };
-        chatLog.push(logEntry);
-        if (chatLog.length > 50) {
-            chatLog.shift();
-        }
+        });
 
         io.to(ROOM_NAME).emit("chat-message", {
+            id: saved.id,        
             time,
             name: user.name,
             text,
@@ -483,18 +549,22 @@ io.on("connection", (socket) => {
         const d2 = Math.floor(Math.random() * 6) + 1;
         const total = d1 + d2;
 
-        const time  = getTimeString();
-        const name  = user.name || "ななし";
+        const time = getTimeString();
+        const name = user.name || "ななし";
         const color = user.color || "#FFFFFF";
 
         const text = `🎲 ${name} が 2D6 を振った：${d1} ＋ ${d2} ＝ ${total}`;
 
-        chatLog.push({ time, name, text, color });
-        if (chatLog.length > 50) {
-            chatLog.shift();
-        }
+        const saved = pushLog({
+            type: "dice",
+            time,
+            name,
+            text,
+            color
+        });
 
         io.to(ROOM_NAME).emit("chat-message", {
+            id: saved.id,        
             time,
             name,
             text,
@@ -511,7 +581,7 @@ io.on("connection", (socket) => {
         const clientId = socketClientIds[socket.id];
         if (!clientId) return;
 
-        const now  = Date.now();
+        const now = Date.now();
 
         // ★ ガチャ専用のクールタイム判定
         const last = lastTopicTimeByClientId[clientId] || 0;
@@ -529,29 +599,26 @@ io.on("connection", (socket) => {
         const drawn = drawTopic();
         if (!drawn) return;
 
-        const time      = getTimeString();
-        const name      = user.name || "匿名";
+        const time = getTimeString();
+        const name = user.name || "匿名";
         const topicText = drawn.text;
 
-        // ★ 再入室用ログに追加（type: "topic"）
-        chatLog.push({
-            type:  "topic",
+        // ★ ここが重要：pushLogで必ず id を付ける（ポーリングで拾えるようにする）
+        const saved = pushLog({
+            type: "topic",
             time,
             name,
             topic: topicText,
             color: null
         });
-        if (chatLog.length > 50) {
-            chatLog.shift();
-        }
 
         io.to(ROOM_NAME).emit("topic-result", {
+            id: saved.id,    
             time,
             topic: topicText,
             drawnBy: name,
         });
     });
-
 
     // 入力中
     socket.on("typing", (isTyping) => {
@@ -585,10 +652,7 @@ io.on("connection", (socket) => {
 
         socket.leave(ROOM_NAME);
 
-        io.to(ROOM_NAME).emit("system-message", {
-            time: getTimeString(),
-            text: `「${leftName}」さんが退室しました。`
-        });
+        emitSystem(`「${leftName}」さんが退室しました。`);
 
         broadcastUserList();
         broadcastTypingUsers();
