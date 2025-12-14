@@ -1,5 +1,13 @@
 // server.js
 require("dotenv").config();
+process.on("uncaughtException", (err) => {
+  console.error("uncaughtException:", err);
+});
+
+process.on("unhandledRejection", (err) => {
+  console.error("unhandledRejection:", err);
+});
+
 const express = require("express");
 const app = express();
 const http = require("http").createServer(app);
@@ -175,25 +183,6 @@ const MAX_USERS = 10;
 
 // 10分（ミリ秒）
 const AUTO_LEAVE_MS = 10 * 60 * 1000;
-
-// 連投制限（1秒）
-function checkRateLimit(clientId) {
-  if (!clientId) return 0;
-
-  const now = Date.now();
-  const last = lastActionTimeByClientId[clientId] || 0;
-  const diff = now - last;
-
-  const min = Number(moderation.minIntervalMs ?? 1000);
-
-  if (diff < min) {
-    return min - diff;
-  }
-
-  lastActionTimeByClientId[clientId] = now;
-  return 0;
-}
-
 
 // clientId ごとの最後のアクション時刻
 const lastActionTimeByClientId = {};
@@ -879,90 +868,58 @@ io.on("connection", (socket) => {
   });
 
   // メッセージ送信
-  socket.on("send-message", (msg) => {
+socket.on("send-message", (msg) => {
+  try {
     const user = users[socket.id];
     if (!user) return;
 
     const text = (msg || "").toString().trim();
     if (!text) return;
 
-    // ★ 長文制限
-    if (moderation.maxMsgLen && text.length > moderation.maxMsgLen) {
-      socket.emit("system-message", {
-        time: getTimeString(),
-        text: `長すぎます（最大 ${moderation.maxMsgLen} 文字）`,
-      });
+    // moderationの安全な既定値
+    const maxLen = Number(moderation?.maxMsgLen ?? 300);
+    const maxUrls = Number(moderation?.maxUrlsPerMsg ?? 3);
+    const blockPII = !!(moderation?.blockPII ?? true);
+
+    // 長文
+    if (maxLen > 0 && text.length > maxLen) {
+      socket.emit("system-message", { time: getTimeString(), text: `長すぎます（最大 ${maxLen} 文字）` });
       return;
     }
 
-    // ★ 個人情報ブロック（ON/OFFを管理画面で切り替え）
-    if (moderation.blockPII && containsPersonalInfo(text)) {
-      socket.emit("system-message", {
-        time: getTimeString(),
-        text: "個人情報（電話番号やメールアドレスなど）は送信できません。",
-      });
+    // 個人情報
+    if (blockPII && containsPersonalInfo(text)) {
+      socket.emit("system-message", { time: getTimeString(), text: "個人情報（電話番号やメールアドレスなど）は送信できません。" });
       return;
     }
 
-    // ★ NGワード（管理画面で編集）
+    // NGワード（管理画面で変更）
     if (containsNgWordByModeration(text)) {
-      socket.emit("system-message", {
-        time: getTimeString(),
-        text: "NGワードが含まれているため、送信できません。",
-      });
+      socket.emit("system-message", { time: getTimeString(), text: "NGワードが含まれているため、送信できません。" });
       return;
     }
 
-
-    // ここは「本人だけに出す警告」なのでログに残さない（idなしOK）
-    if (containsPersonalInfo(text)) {
-      socket.emit("system-message", {
-        time: getTimeString(),
-        text: "個人情報（電話番号やメールアドレスなど）は送信できません。",
-      });
-      return;
-    }
-
-    if (containsNgWord(text)) {
-      socket.emit("system-message", {
-        time: getTimeString(),
-        text: "NGワードが含まれているため、送信できません。",
-      });
-      return;
-    }
-
+    // URL上限
     const urls = text.match(URL_REGEX) || [];
-    const maxUrls = Number(moderation.maxUrlsPerMsg ?? 3);
-
-    if (urls.length > maxUrls) {
-      socket.emit("system-message", {
-        time: getTimeString(),
-        text: `1つのメッセージに貼れるURLは最大 ${maxUrls} 件までです。`,
-      });
+    if (maxUrls >= 0 && urls.length > maxUrls) {
+      socket.emit("system-message", { time: getTimeString(), text: `1つのメッセージに貼れるURLは最大 ${maxUrls} 件までです。` });
       return;
     }
 
-
+    // 危険ドメイン
     if (urls.length > 0) {
-      try {
-        for (const raw of urls) {
-          const urlStr = raw.startsWith("http") ? raw : `http://${raw}`;
-          const u = new URL(urlStr);
-          const host = u.hostname.toLowerCase();
-
-          if (BLOCKED_URL_DOMAINS.some((domain) => host === domain || host.endsWith("." + domain))) {
-            socket.emit("system-message", {
-              time: getTimeString(),
-              text: "安全のため、一部の短縮URLや招待リンクは送信できません。",
-            });
-            return;
-          }
+      for (const raw of urls) {
+        const urlStr = raw.startsWith("http") ? raw : `http://${raw}`;
+        const u = new URL(urlStr);
+        const host = u.hostname.toLowerCase();
+        if (BLOCKED_URL_DOMAINS.some((d) => host === d || host.endsWith("." + d))) {
+          socket.emit("system-message", { time: getTimeString(), text: "安全のため、一部の短縮URLや招待リンクは送信できません。" });
+          return;
         }
-      } catch (e) {
-        console.warn("URL parse error:", e);
       }
     }
 
+    // 連投制限（checkRateLimitは moderation.minIntervalMs を使う版を1つだけ残す）
     const clientId = socketClientIds[socket.id] || socket.id;
     const waitMs = checkRateLimit(clientId);
     if (waitMs > 0) {
@@ -972,16 +929,15 @@ io.on("connection", (socket) => {
 
     touchActivity(socket.id);
 
-    emitLog(
-      "chat",
-      {
-        name: user.name,
-        text,
-        color: user.color || null,
-      },
-      { fromId: socket.id }
-    );
-  });
+    emitLog("chat", { name: user.name, text, color: user.color || null }, { fromId: socket.id });
+  } catch (err) {
+    console.error("send-message error:", err);
+    // 落とさず、本人にだけ軽く通知（ログには残さない）
+    try {
+      socket.emit("system-message", { time: getTimeString(), text: "送信処理でエラーが発生しました。時間をおいて再試行してください。" });
+    } catch (_) {}
+  }
+});
 
   // 2D6
   socket.on("roll-dice", () => {
