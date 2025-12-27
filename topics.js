@@ -189,11 +189,6 @@ function updateTopic(room, id, patch = {}) {
 
   const { idx, topic } = findById(all, id);
 
-  // 安全：このroomに所属してるお題だけ編集可（不要なら外してOK）
-  if (!Array.isArray(topic.rooms) || !topic.rooms.includes(r)) {
-    throw new Error("topic is not in this room");
-  }
-
   if (patch.text !== undefined) {
     topic.text = sanitizeText(patch.text);
   }
@@ -215,10 +210,7 @@ function deleteTopic(room, id) {
 
   const { idx, topic } = findById(all, id);
 
-  // 安全：このroomに所属してるお題だけ削除可
-  if (!Array.isArray(topic.rooms) || !topic.rooms.includes(r)) {
-    throw new Error("topic is not in this room");
-  }
+
 
   const removed = all.splice(idx, 1)[0];
   saveAll(all);
