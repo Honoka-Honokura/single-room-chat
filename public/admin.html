@@ -138,7 +138,7 @@
     <label>対象ルーム（複数選択可）</label>
     <div class="rooms-box">
       <div class="rooms-grid" id="addRoomCheckboxes"></div>
-      <div class="rooms-hint">※「全ルーム共通」を選ぶと、他のチェックは無視されます。</div>
+      <div class="rooms-hint">※このお題を表示したいルームにチェックを入れてください（複数OK）。</div>
     </div>
 
     <label for="newTopicText">お題テキスト</label>
@@ -248,6 +248,39 @@
       return Array.from(set);
     }
 
+    async function refreshRoomsFromServer(password) {
+      try {
+        const res = await fetch(`/api/admin/rooms?password=${encodeURIComponent(password)}`);
+        if (!res.ok) return;
+
+        const data = await res.json().catch(() => ({}));
+        if (!data || !Array.isArray(data.rooms)) return;
+
+        // サーバ優先で上書き
+        AVAILABLE_ROOMS.length = 0;
+        data.rooms.map(normalizeRoomSlug).filter(Boolean).forEach(r => AVAILABLE_ROOMS.push(r));
+
+        // roomSelect を作り直し（現在値は維持）
+        const keep = getSelectedRoom();
+        roomSelect.innerHTML = "";
+        AVAILABLE_ROOMS.forEach(r => {
+          const opt = document.createElement("option");
+          opt.value = r;
+          opt.textContent = r;
+          roomSelect.appendChild(opt);
+        });
+        roomSelect.value = AVAILABLE_ROOMS.includes(keep) ? keep : (AVAILABLE_ROOMS[0] || "main");
+        setRoomPill(getSelectedRoom());
+
+        // 追加フォームのチェックボックスも再描画（選択状態は最低限「今のroom」をON）
+        renderRoomCheckboxGroup(addRoomCheckboxes, [getSelectedRoom()]);
+
+      } catch (e) {
+        console.warn("refreshRoomsFromServer failed:", e);
+      }
+    }
+
+
     async function initRoomSelect() {
       const rooms = await getAllowedRooms();
 
@@ -309,56 +342,31 @@
     function renderRoomCheckboxGroup(container, selectedRooms = []) {
       container.innerHTML = "";
 
-      // ★ 共通（*）
-      const common = createRoomChip("*", "全ルーム共通", selectedRooms.includes("*"));
-      container.appendChild(common.label);
-
-      // ルーム個別
+      // ルーム個別のみ（* 共通は廃止）
       AVAILABLE_ROOMS.forEach(r => {
         const chip = createRoomChip(r, r, selectedRooms.includes(r));
         container.appendChild(chip.label);
       });
-
-      // 挙動：* をONにしたら他をOFF、他をONにしたら * OFF
-      const allCbs = Array.from(container.querySelectorAll('input[type="checkbox"]'));
-
-      function applyRules(changedCb) {
-        const isAll = changedCb.value === "*";
-
-        if (isAll && changedCb.checked) {
-          // * ON -> 他OFF
-          allCbs.forEach(cb => {
-            if (cb.value !== "*") cb.checked = false;
-          });
-        } else if (!isAll && changedCb.checked) {
-          // 個別ON -> * OFF
-          const all = allCbs.find(cb => cb.value === "*");
-          if (all) all.checked = false;
-        }
-      }
-
-      allCbs.forEach(cb => {
-        cb.addEventListener("change", () => applyRules(cb));
-      });
     }
+
 
     function getRoomsFromGroup(container) {
       const cbs = Array.from(container.querySelectorAll('input[type="checkbox"]'));
-      const selected = cbs.filter(cb => cb.checked).map(cb => cb.value);
-
-      if (selected.includes("*")) return ["*"];
+      const selected = cbs.filter(cb => cb.checked).map(cb => normalizeRoomSlug(cb.value));
 
       // 何も選ばれてない場合は「今見てるroom」に入れる（事故防止）
       if (selected.length === 0) return [getSelectedRoom()];
 
-      return selected.map(normalizeRoomSlug);
+      // 重複排除
+      return Array.from(new Set(selected));
     }
+
 
     function roomsLabel(rooms) {
       if (!Array.isArray(rooms) || rooms.length === 0) return "未設定";
-      if (rooms.includes("*")) return "共通";
       return rooms.join(",");
     }
+
 
     // ---- render ----
     function renderTopics(list) {
@@ -427,23 +435,28 @@
       const password = adminPasswordInput.value.trim();
       if (!password) { setStatus("管理パスワードを入力してください。", true); return; }
 
-      const room = getSelectedRoom();
-
       try {
-        setStatus(`読み込み中…（room: ${room}）`);
-        const res = await fetch(`/api/topics?password=${encodeURIComponent(password)}&room=${encodeURIComponent(room)}`);
+        setStatus("読み込み中…（全ルーム）");
+
+        // ★ まず許可ルーム一覧をサーバから取得してUIを更新
+        await refreshRoomsFromServer(password);
+
+        // ★ 全お題一覧（全ルーム）
+        const res = await fetch(`/api/admin/topics?password=${encodeURIComponent(password)}`);
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error || "読み込みに失敗しました。");
         }
+
         const list = await res.json();
         renderTopics(list);
-        setStatus(`room:${room} のお題を ${list.length} 件読み込みました。`);
+        setStatus(`全ルームのお題を ${list.length} 件読み込みました。`);
       } catch (err) {
         console.error(err);
         setStatus(err.message || "読み込み中にエラーが発生しました。", true);
       }
     }
+
 
     async function addTopicFromForm() {
       const password = adminPasswordInput.value.trim();
@@ -462,7 +475,7 @@
         const res = await fetch("/api/topics", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password, room, text, weight: weightVal, rooms })
+          body: JSON.stringify({ password, text, weight: weightVal, rooms })
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -522,7 +535,8 @@
         const res = await fetch(`/api/topics/${editingId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password, room, text: newText, weight: newWeight, rooms })
+          body: JSON.stringify({ password, text: newText, weight: newWeight, rooms })
+
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -552,7 +566,8 @@
       try {
         setStatus(`削除中…（room: ${room}）`);
         const res = await fetch(
-          `/api/topics/${id}?password=${encodeURIComponent(password)}&room=${encodeURIComponent(room)}`,
+        `/api/topics/${id}?password=${encodeURIComponent(password)}&room=main`
+
           { method: "DELETE" }
         );
         if (!res.ok) {
