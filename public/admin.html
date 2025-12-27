@@ -73,6 +73,49 @@
       border:1px solid #c7d2fe;
       vertical-align: middle;
     }
+
+    .rooms-box{
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 10px 10px 6px;
+      background: #fff;
+      margin-bottom: 8px;
+    }
+    .rooms-grid{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px 12px;
+      margin-top: 6px;
+    }
+    .room-chip{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      padding: 4px 8px;
+      border: 1px solid #e5e7eb;
+      border-radius: 999px;
+      background: #f9fafb;
+      font-size: 12px;
+      user-select:none;
+    }
+    .room-chip input{ transform: translateY(0.5px); }
+    .rooms-hint{
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 6px;
+    }
+    .badge{
+      display:inline-block;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid #e5e7eb;
+      background:#f9fafb;
+      font-size: 12px;
+      margin-left: 6px;
+      color:#374151;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -91,6 +134,13 @@
 
   <div class="card">
     <h2 style="font-size:16px;margin:0 0 8px;">お題の追加</h2>
+
+    <label>対象ルーム（複数選択可）</label>
+    <div class="rooms-box">
+      <div class="rooms-grid" id="addRoomCheckboxes"></div>
+      <div class="rooms-hint">※「全ルーム共通」を選ぶと、他のチェックは無視されます。</div>
+    </div>
+
     <label for="newTopicText">お題テキスト</label>
     <textarea id="newTopicText" rows="3" placeholder="ここに新しいお題を入力（改行OK）"></textarea>
 
@@ -119,6 +169,12 @@
     <div class="dialog-inner">
       <h3 style="margin:0 0 10px;font-size:16px;">お題の編集（改行OK）</h3>
 
+      <label>対象ルーム（複数選択可）</label>
+      <div class="rooms-box">
+        <div class="rooms-grid" id="editRoomCheckboxes"></div>
+        <div class="rooms-hint">※「全ルーム共通」を選ぶと、他のチェックは無視されます。</div>
+      </div>
+
       <label for="editTopicText">お題テキスト</label>
       <textarea id="editTopicText" rows="7"></textarea>
 
@@ -146,6 +202,9 @@
     const roomSelect         = document.getElementById("roomSelect");
     const roomPill           = document.getElementById("roomPill");
 
+    const addRoomCheckboxes  = document.getElementById("addRoomCheckboxes");
+    const editRoomCheckboxes = document.getElementById("editRoomCheckboxes");
+
     const editDialog         = document.getElementById("editDialog");
     const editTopicText      = document.getElementById("editTopicText");
     const editTopicWeight    = document.getElementById("editTopicWeight");
@@ -155,6 +214,10 @@
 
     let editingId = null;
     let currentTopics = [];
+
+    // ★ ここをあなたの .env の ROOM_SLUGS に合わせて増やしてOK
+    // 例: ROOM_SLUGS=main,night,game なら ["main","night","game"]
+    const AVAILABLE_ROOMS = ["main", "night"];
 
     // ---- room helpers ----
     function normalizeRoomSlug(slug) {
@@ -175,18 +238,18 @@
       return "main";
     }
 
-    async function getAllowedRooms(password) {
-      // サーバ側に "許可ルーム一覧API" はないので、
-      // ここでは「手動入力しやすいように」候補をURLから1つ入れる＋自由入力的に拡張したい場合は別案。
-      // いまは「最低限」: 現在のroomを入れる + main を入れる。
+    async function getAllowedRooms() {
+      // サーバに一覧APIが無い前提なので、フロントで持つ
+      // + URLから推定されたroomがリストになければ追加（保険）
       const r = getRoomFromUrl();
-      const set = new Set(["main", r].filter(Boolean));
+      const set = new Set(AVAILABLE_ROOMS.map(normalizeRoomSlug));
+      if (r) set.add(r);
+      set.add("main");
       return Array.from(set);
     }
 
     async function initRoomSelect() {
-      const password = adminPasswordInput.value.trim();
-      const rooms = await getAllowedRooms(password);
+      const rooms = await getAllowedRooms();
 
       roomSelect.innerHTML = "";
       rooms.forEach(r => {
@@ -211,7 +274,6 @@
 
     roomSelect.addEventListener("change", () => {
       setRoomPill(getSelectedRoom());
-      // ルーム切替したら一覧更新
       loadTopics();
     });
 
@@ -223,6 +285,79 @@
     function setEditStatus(message, isError = false) {
       editStatus.textContent = message || "";
       editStatus.classList.toggle("error", !!isError);
+    }
+
+    // ---- rooms UI ----
+    function createRoomChip(value, labelText, checked = false) {
+      const label = document.createElement("label");
+      label.className = "room-chip";
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = value;
+      cb.checked = !!checked;
+
+      const span = document.createElement("span");
+      span.textContent = labelText;
+
+      label.appendChild(cb);
+      label.appendChild(span);
+
+      return { label, cb };
+    }
+
+    function renderRoomCheckboxGroup(container, selectedRooms = []) {
+      container.innerHTML = "";
+
+      // ★ 共通（*）
+      const common = createRoomChip("*", "全ルーム共通", selectedRooms.includes("*"));
+      container.appendChild(common.label);
+
+      // ルーム個別
+      AVAILABLE_ROOMS.forEach(r => {
+        const chip = createRoomChip(r, r, selectedRooms.includes(r));
+        container.appendChild(chip.label);
+      });
+
+      // 挙動：* をONにしたら他をOFF、他をONにしたら * OFF
+      const allCbs = Array.from(container.querySelectorAll('input[type="checkbox"]'));
+
+      function applyRules(changedCb) {
+        const isAll = changedCb.value === "*";
+
+        if (isAll && changedCb.checked) {
+          // * ON -> 他OFF
+          allCbs.forEach(cb => {
+            if (cb.value !== "*") cb.checked = false;
+          });
+        } else if (!isAll && changedCb.checked) {
+          // 個別ON -> * OFF
+          const all = allCbs.find(cb => cb.value === "*");
+          if (all) all.checked = false;
+        }
+      }
+
+      allCbs.forEach(cb => {
+        cb.addEventListener("change", () => applyRules(cb));
+      });
+    }
+
+    function getRoomsFromGroup(container) {
+      const cbs = Array.from(container.querySelectorAll('input[type="checkbox"]'));
+      const selected = cbs.filter(cb => cb.checked).map(cb => cb.value);
+
+      if (selected.includes("*")) return ["*"];
+
+      // 何も選ばれてない場合は「今見てるroom」に入れる（事故防止）
+      if (selected.length === 0) return [getSelectedRoom()];
+
+      return selected.map(normalizeRoomSlug);
+    }
+
+    function roomsLabel(rooms) {
+      if (!Array.isArray(rooms) || rooms.length === 0) return "未設定";
+      if (rooms.includes("*")) return "共通";
+      return rooms.join(",");
     }
 
     // ---- render ----
@@ -252,6 +387,12 @@
         const tdText = document.createElement("td");
         tdText.className = "text-cell";
         tdText.textContent = topic.text;
+
+        // rooms バッジ（表示だけ）
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = `rooms: ${roomsLabel(topic.rooms)}`;
+        tdText.appendChild(badge);
 
         const tdWeight = document.createElement("td");
         tdWeight.className = "weight-cell";
@@ -314,21 +455,24 @@
       const weightVal = Number(newTopicWeight.value || "1");
       if (!text) { setStatus("お題テキストを入力してください。", true); return; }
 
+      const rooms = getRoomsFromGroup(addRoomCheckboxes);
+
       try {
         setStatus(`追加中…（room: ${room}）`);
         const res = await fetch("/api/topics", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password, room, text, weight: weightVal })
+          body: JSON.stringify({ password, room, text, weight: weightVal, rooms })
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error || "追加に失敗しました。");
         }
         await res.json();
-        setStatus(`room:${room} にお題を追加しました。`);
+        setStatus(`お題を追加しました。（rooms: ${roomsLabel(rooms)}）`);
         newTopicText.value = "";
         newTopicWeight.value = "1";
+        // デフォルト選択は維持（次も同じ割当で追加しやすい）
         loadTopics();
       } catch (err) {
         console.error(err);
@@ -346,6 +490,8 @@
       editingId = id;
       editTopicText.value = target.text || "";
       editTopicWeight.value = String(target.weight ?? 1);
+
+      renderRoomCheckboxGroup(editRoomCheckboxes, Array.isArray(target.rooms) ? target.rooms : []);
       setEditStatus("");
       editDialog.showModal();
       editTopicText.focus();
@@ -369,12 +515,14 @@
         return;
       }
 
+      const rooms = getRoomsFromGroup(editRoomCheckboxes);
+
       try {
         setEditStatus(`更新中…（room: ${room}）`);
         const res = await fetch(`/api/topics/${editingId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password, room, text: newText, weight: newWeight })
+          body: JSON.stringify({ password, room, text: newText, weight: newWeight, rooms })
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -382,7 +530,7 @@
         }
         await res.json();
         editDialog.close();
-        setStatus(`room:${room} のお題を更新しました。`);
+        setStatus(`お題を更新しました。（rooms: ${roomsLabel(rooms)}）`);
         loadTopics();
       } catch (err) {
         console.error(err);
@@ -412,7 +560,7 @@
           throw new Error(data.error || "削除に失敗しました。");
         }
         await res.json();
-        setStatus(`room:${room} のお題を削除しました。`);
+        setStatus("お題を削除しました。");
         loadTopics();
       } catch (err) {
         console.error(err);
@@ -432,9 +580,12 @@
     window.editTopic = editTopic;
     window.deleteTopic = deleteTopic;
 
-    // 初期化：room表示
+    // 初期化
     (async () => {
       await initRoomSelect();
+
+      // 追加フォームの rooms 初期値：今見てるroomをチェック
+      renderRoomCheckboxGroup(addRoomCheckboxes, [getSelectedRoom()]);
     })();
   </script>
 </body>
