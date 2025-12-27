@@ -1,10 +1,9 @@
-// topics.js（複数ルーム対応 / 永続化 / 重み付きガチャ / 自動移行）
+// topics.js（全件表示＋ルーム割り当て方式 / 永続化 / 重み付きガチャ）
 const fs = require("fs");
 const path = require("path");
 
 const TOPICS_FILE = path.join(__dirname, "topics.json");
 
-// ---------- utils ----------
 function normalizeRoomSlug(slug) {
   const s = String(slug || "main").trim();
   const safe = s.replace(/[^a-zA-Z0-9_-]/g, "");
@@ -42,21 +41,14 @@ function sanitizeText(text) {
   return t;
 }
 
-function sanitizeRooms(rooms, fallbackRoom = "main") {
-  // rooms が未指定 or 変な形なら fallbackRoom だけにする
-  let arr = [];
-  if (Array.isArray(rooms)) arr = rooms;
-  else if (typeof rooms === "string" && rooms.trim()) arr = rooms.split(","); // 念のため
-  arr = arr.map((r) => normalizeRoomSlug(r)).filter(Boolean);
-
-  // 空なら fallback
-  if (arr.length === 0) arr = [normalizeRoomSlug(fallbackRoom)];
-
-  // 重複除去
+function sanitizeRooms(rooms) {
+  // 共通(*)は不要：空は「どこにも所属しない」扱いにする
+  if (!Array.isArray(rooms)) return [];
+  const arr = rooms.map((r) => normalizeRoomSlug(r)).filter(Boolean);
   return Array.from(new Set(arr));
 }
 
-function nextGlobalId(list) {
+function nextId(list) {
   let max = 0;
   for (const t of list) {
     const id = Number(t?.id);
@@ -65,32 +57,48 @@ function nextGlobalId(list) {
   return max + 1;
 }
 
-// ---------- storage ----------
 // 新形式 topics.json：
 // [
-//   { "id": 1, "text": "お題", "weight": 2, "rooms": ["main","night"] },
+//   { "id": 1, "text": "お題", "weight": 1, "rooms": ["main","night"] },
 //   ...
 // ]
 function loadAll() {
   const data = readJsonSafe(TOPICS_FILE, []);
 
-  // すでに新形式（配列 of object）なら整形して返す
-  if (Array.isArray(data)) {
-    // 旧形式：[ "aaa", "bbb" ] → main に移行
-    if (data.every((x) => typeof x === "string")) {
-      const migrated = data
-        .map((t, i) => ({
-          id: i + 1,
-          text: String(t ?? "").trim(),
-          weight: 1,
-          rooms: ["main"],
-        }))
-        .filter((x) => x.text);
-      writeJsonSafe(TOPICS_FILE, migrated);
-      return migrated;
+  // 旧形式（部屋別オブジェクト）→移行
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const migrated = [];
+    let gid = 1;
+    for (const [roomKey, list] of Object.entries(data)) {
+      const room = normalizeRoomSlug(roomKey);
+      if (!Array.isArray(list)) continue;
+      for (const item of list) {
+        const text = String(item?.text ?? "").trim();
+        if (!text) continue;
+        const weight = clampInt(item?.weight ?? 1, 1, 100, 1);
+        migrated.push({ id: gid++, text, weight, rooms: [room] });
+      }
     }
+    writeJsonSafe(TOPICS_FILE, migrated);
+    return migrated;
+  }
 
-    // 配列だけど中身がバラバラでも一応整える
+  // 旧形式（配列の文字列）→ main 扱いで移行
+  if (Array.isArray(data) && data.every((x) => typeof x === "string")) {
+    const migrated = data
+      .map((t, i) => ({
+        id: i + 1,
+        text: String(t ?? "").trim(),
+        weight: 1,
+        rooms: ["main"],
+      }))
+      .filter((x) => x.text);
+    writeJsonSafe(TOPICS_FILE, migrated);
+    return migrated;
+  }
+
+  // すでに新形式（配列 of object）
+  if (Array.isArray(data)) {
     const normalized = data
       .map((t) => {
         if (!t || typeof t !== "object") return null;
@@ -99,48 +107,14 @@ function loadAll() {
         const text = String(t.text ?? "").trim();
         if (!text) return null;
         const weight = clampInt(t.weight ?? 1, 1, 100, 1);
-        const rooms = sanitizeRooms(t.rooms, "main");
+        const rooms = sanitizeRooms(t.rooms);
         return { id, text, weight, rooms };
       })
       .filter(Boolean);
 
-    // もし正規化で変化したら保存しておく
-    if (normalized.length !== data.length) {
-      writeJsonSafe(TOPICS_FILE, normalized);
-    }
+    // 不正データが混じってたら整形保存
+    if (normalized.length !== data.length) writeJsonSafe(TOPICS_FILE, normalized);
     return normalized;
-  }
-
-  // 旧形式（部屋ごとのオブジェクト）から移行
-  // {
-  //   "main": [ {id,text,weight}, ... ],
-  //   "night": [ ... ]
-  // }
-  if (data && typeof data === "object") {
-    const migrated = [];
-    let gid = 1;
-
-    for (const [roomKey, list] of Object.entries(data)) {
-      const room = normalizeRoomSlug(roomKey);
-      if (!Array.isArray(list)) continue;
-
-      for (const item of list) {
-        if (!item) continue;
-        const text = String(item.text ?? "").trim();
-        if (!text) continue;
-        const weight = clampInt(item.weight ?? 1, 1, 100, 1);
-
-        migrated.push({
-          id: gid++,
-          text,
-          weight,
-          rooms: [room],
-        });
-      }
-    }
-
-    writeJsonSafe(TOPICS_FILE, migrated);
-    return migrated;
   }
 
   return [];
@@ -150,19 +124,13 @@ function saveAll(all) {
   writeJsonSafe(TOPICS_FILE, all);
 }
 
-function findById(all, id) {
-  const tid = Number(id);
-  if (!Number.isInteger(tid)) throw new Error("invalid id");
-  const idx = all.findIndex((t) => Number(t.id) === tid);
-  if (idx === -1) throw new Error("topic not found");
-  return { tid, idx, topic: all[idx] };
+function getAllTopics() {
+  return loadAll().slice().sort((a, b) => (a.id || 0) - (b.id || 0));
 }
 
-// ---------- public API ----------
 function getTopics(room) {
-  const all = loadAll();
   const r = normalizeRoomSlug(room);
-  return all
+  return loadAll()
     .filter((t) => Array.isArray(t.rooms) && t.rooms.includes(r))
     .slice()
     .sort((a, b) => (a.id || 0) - (b.id || 0));
@@ -170,47 +138,41 @@ function getTopics(room) {
 
 function addTopic(room, text, weight, rooms) {
   const all = loadAll();
-  const baseRoom = normalizeRoomSlug(room);
   const t = sanitizeText(text);
   const w = clampInt(weight ?? 1, 1, 100, 1);
 
-  const rs = sanitizeRooms(rooms, baseRoom);
+  // rooms が渡ってきたらそれを採用。なければ従来通り room だけ所属
+  const rs = Array.isArray(rooms) ? sanitizeRooms(rooms) : [normalizeRoomSlug(room)];
 
-  const item = { id: nextGlobalId(all), text: t, weight: w, rooms: rs };
+  const item = { id: nextId(all), text: t, weight: w, rooms: rs };
   all.push(item);
-
   saveAll(all);
   return item;
 }
 
 function updateTopic(room, id, patch = {}) {
   const all = loadAll();
-  const r = normalizeRoomSlug(room);
+  const tid = Number(id);
+  if (!Number.isInteger(tid)) throw new Error("invalid id");
 
-  const { idx, topic } = findById(all, id);
+  const idx = all.findIndex((t) => Number(t.id) === tid);
+  if (idx === -1) throw new Error("topic not found");
 
-  if (patch.text !== undefined) {
-    topic.text = sanitizeText(patch.text);
-  }
-  if (patch.weight !== undefined) {
-    topic.weight = clampInt(patch.weight, 1, 100, 1);
-  }
-  if (patch.rooms !== undefined) {
-    topic.rooms = sanitizeRooms(patch.rooms, r);
-  }
+  if (patch.text !== undefined) all[idx].text = sanitizeText(patch.text);
+  if (patch.weight !== undefined) all[idx].weight = clampInt(patch.weight, 1, 100, 1);
+  if (patch.rooms !== undefined) all[idx].rooms = sanitizeRooms(patch.rooms);
 
-  all[idx] = topic;
   saveAll(all);
-  return topic;
+  return all[idx];
 }
 
 function deleteTopic(room, id) {
   const all = loadAll();
-  const r = normalizeRoomSlug(room);
+  const tid = Number(id);
+  if (!Number.isInteger(tid)) throw new Error("invalid id");
 
-  const { idx, topic } = findById(all, id);
-
-
+  const idx = all.findIndex((t) => Number(t.id) === tid);
+  if (idx === -1) throw new Error("topic not found");
 
   const removed = all.splice(idx, 1)[0];
   saveAll(all);
@@ -218,20 +180,12 @@ function deleteTopic(room, id) {
 }
 
 function drawTopic(room) {
-  const all = loadAll();
   const r = normalizeRoomSlug(room);
-
-  const list = all.filter(
-    (t) =>
-      t &&
-      String(t.text || "").trim() &&
-      Array.isArray(t.rooms) &&
-      t.rooms.includes(r)
+  const list = loadAll().filter(
+    (t) => t && String(t.text || "").trim() && Array.isArray(t.rooms) && t.rooms.includes(r)
   );
-
   if (list.length === 0) return null;
 
-  // 重み付き抽選
   let total = 0;
   const weights = list.map((t) => {
     const w = clampInt(t.weight ?? 1, 1, 100, 1);
@@ -239,7 +193,7 @@ function drawTopic(room) {
     return w;
   });
 
-  let rnd = Math.floor(Math.random() * total) + 1; // 1..total
+  let rnd = Math.floor(Math.random() * total) + 1;
   for (let i = 0; i < list.length; i++) {
     rnd -= weights[i];
     if (rnd <= 0) return list[i];
@@ -250,6 +204,7 @@ function drawTopic(room) {
 module.exports = {
   drawTopic,
   getTopics,
+  getAllTopics,     // ★追加
   addTopic,
   updateTopic,
   deleteTopic,

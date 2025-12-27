@@ -55,7 +55,6 @@ const ALLOWED_ROOMS = new Set(
 
 function normalizeRoomSlug(slug) {
   const s = String(slug || "main").trim();
-  // slugの安全化（変な文字を落とす）
   const safe = s.replace(/[^a-zA-Z0-9_-]/g, "");
   return safe || "main";
 }
@@ -74,15 +73,62 @@ app.get("/", (req, res) => {
 app.get("/r/:slug", (req, res) => {
   const room = normalizeRoomSlug(req.params.slug);
   if (!isRoomAllowed(room)) return res.status(404).send("Not Found");
-
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
 // ===========================
+// 管理用シンプルAPI（ここを先に定義！）
+// ===========================
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+if (!ADMIN_PASSWORD) {
+  console.error("❌ ADMIN_PASSWORD is not set in .env");
+  process.exit(1);
+}
+
+function requireAdmin(req, res) {
+  const password =
+    req.query.password ||
+    req.headers["x-admin-password"] ||
+    (req.body && req.body.password);
+
+  if (password !== ADMIN_PASSWORD) {
+    res.status(403).json({ error: "forbidden" });
+    return null;
+  }
+  return true;
+}
+
+// ===========================
 // ★ お題ガチャ（部屋別）
 // ===========================
-const { drawTopic, getTopics, addTopic, updateTopic, deleteTopic } = require("./topics");
+const {
+  drawTopic,
+  getTopics,
+  getAllTopics, // ★ 追加：/api/admin/topics 用
+  addTopic,
+  updateTopic,
+  deleteTopic,
+} = require("./topics");
+
 const TOPIC_COOLDOWN_MS = 5000;
+
+// ===========================
+// ★ 管理者：許可ルーム一覧
+// GET /api/admin/rooms?password=...
+// ===========================
+app.get("/api/admin/rooms", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  res.json({ rooms: Array.from(ALLOWED_ROOMS) });
+});
+
+// ===========================
+// ★ 管理者：全お題一覧（全ルーム）
+// GET /api/admin/topics?password=...
+// ===========================
+app.get("/api/admin/topics", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  res.json(getAllTopics()); // topics.js 側で実装が必要
+});
 
 // ===========================
 // ★ moderation / ban 永続化（全ルーム共通）
@@ -161,13 +207,10 @@ function isBanned(clientId, ip) {
 function containsNgWordByModeration(text) {
   const normalized = normalizeForCheck(text);
 
-  // 単語（部分一致）
   for (const w of moderation.ngWords || []) {
     const nw = normalizeForCheck(w);
     if (nw && normalized.includes(nw)) return true;
   }
-
-  // 正規表現
   for (const re of compiledNgRegexes) {
     try {
       if (re.test(String(text))) return true;
@@ -176,11 +219,9 @@ function containsNgWordByModeration(text) {
   return false;
 }
 
-// URL貼りすぎ防止
 const URL_REGEX = /(https?:\/\/[^\s]+)/gi;
 const BLOCKED_URL_DOMAINS = ["bit.ly", "t.co", "discord.gg", "goo.gl", "tinyurl.com"];
 
-// 個人情報検出
 const EMAIL_REGEX = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 const PHONE_REGEXES = [/0\d{1,4}-\d{1,4}-\d{3,4}/, /\b0\d{9,10}\b/];
 
@@ -194,7 +235,6 @@ function containsPersonalInfo(text) {
   return false;
 }
 
-// 時刻文字列
 function getTimeString() {
   return new Date().toLocaleTimeString("ja-JP", {
     timeZone: "Asia/Tokyo",
@@ -203,7 +243,6 @@ function getTimeString() {
   });
 }
 
-// 性別記号
 function applyGenderMark(name, gender) {
   const base = String(name || "").trim();
   if (base.endsWith("♂") || base.endsWith("♀")) return base;
@@ -213,440 +252,10 @@ function applyGenderMark(name, gender) {
 }
 
 // ===========================
-// ★ ルームごとの状態（完全分離）
-// ===========================
-const rooms = new Map();
-function getRoomState(roomSlug) {
-  const room = normalizeRoomSlug(roomSlug);
-  if (!rooms.has(room)) {
-    rooms.set(room, {
-      users: {},                 // { socketId: { name, color, gender } }
-      typingUsers: new Set(),    // Set<socketId>
-      chatLog: [],               // {id,type,time,...} 最大50
-      nextMessageId: 1,
-      pollWaiters: new Set(),    // { sinceId, res, timer }
-      lastActivityTimes: {},     // { socketId: time }
-    });
-  }
-  return rooms.get(room);
-}
-
-// ロングポーリング設定
-const POLL_TIMEOUT_MS = 25000;
-
-// 最大人数（部屋ごと）
-const MAX_USERS = 10;
-
-// 無操作タイムアウト（部屋ごと）
-const INACTIVITY_LIMIT_MS = 10 * 60 * 1000; // 10分
-
-// ★ グローバル（ルーム跨ぎで共有）
-// socket.id -> clientId
-const socketClientIds = {};
-
-// 再入室判定（clientId×room）
-const lastLeaveByClientIdRoom = {}; // { [clientId]: { [room]: time } }
-
-// 連投制限（clientId×room）
-const lastActionTimeByKey = {}; // { ["room:clientId"]: time }
-
-// お題ガチャクールダウン（clientId×room）
-const lastTopicTimeByKey = {}; // { ["room:clientId"]: time }
-
-function keyOf(room, clientId) {
-  return `${room}:${clientId}`;
-}
-
-function checkRateLimit(room, clientId) {
-  if (!clientId) return 0;
-  const now = Date.now();
-  const k = keyOf(room, clientId);
-  const last = lastActionTimeByKey[k] || 0;
-  const diff = now - last;
-
-  const min = Number(moderation?.minIntervalMs ?? 1000);
-  if (diff < min) return min - diff;
-
-  lastActionTimeByKey[k] = now;
-  return 0;
-}
-
-function pushLog(room, entry) {
-  const st = getRoomState(room);
-
-  const e = { id: st.nextMessageId++, ...entry };
-  st.chatLog.push(e);
-  if (st.chatLog.length > 50) st.chatLog.shift();
-
-  // ロングポーリング待機者に新着を返す
-  for (const w of Array.from(st.pollWaiters)) {
-    const news = st.chatLog.filter((m) => m.id > w.sinceId);
-    if (news.length > 0) {
-      clearTimeout(w.timer);
-      st.pollWaiters.delete(w);
-      w.res.json({ ok: true, messages: news, serverTime: Date.now() });
-    }
-  }
-
-  return e;
-}
-
-/**
- * emitLog(type, payload, opts)
- * type: "system" | "chat" | "dice" | "topic"
- */
-function emitLog(type, payload, opts = {}) {
-  const room = normalizeRoomSlug(opts.room || "main");
-  const time = getTimeString();
-
-  const saved = pushLog(room, { type, time, ...payload });
-
-  if (type === "topic") {
-    io.to(room).emit("topic-result", {
-      id: saved.id,
-      time,
-      topic: saved.topic,
-      drawnBy: saved.name,
-    });
-    return saved;
-  }
-
-  if (type === "system") {
-    io.to(room).emit("system-message", {
-      id: saved.id,
-      time,
-      text: saved.text,
-    });
-    return saved;
-  }
-
-  // chat / dice は chat-message に統一
-  io.to(room).emit("chat-message", {
-    id: saved.id,
-    time,
-    name: saved.name,
-    text: saved.text,
-    fromId: opts.fromId || null,
-    color: saved.color || null,
-  });
-
-  return saved;
-}
-
-function emitSystem(room, text) {
-  return emitLog("system", { text }, { room });
-}
-
-function broadcastUserList(room) {
-  const r = normalizeRoomSlug(room);
-  const st = getRoomState(r);
-  const userList = Object.values(st.users).map((u) => u.name);
-  io.to(r).emit("user-list", userList);
-}
-
-function broadcastTypingUsers(room) {
-  const r = normalizeRoomSlug(room);
-  const st = getRoomState(r);
-  const names = Array.from(st.typingUsers)
-    .map((id) => st.users[id]?.name)
-    .filter(Boolean);
-  io.to(r).emit("typing-users", names);
-}
-
-function touchActivity(room, socketId) {
-  const st = getRoomState(room);
-  st.lastActivityTimes[socketId] = Date.now();
-}
-
-// 参照ヘッダから room を推定（入室前のオンライン人数表示用）
-function getRoomFromHandshake(socket) {
-  try {
-    const ref = socket.handshake.headers.referer || "";
-    const u = new URL(ref);
-    const m = u.pathname.match(/^\/r\/([^\/]+)/);
-    if (m && m[1]) return normalizeRoomSlug(decodeURIComponent(m[1]));
-  } catch (_) {}
-  return "main";
-}
-
-// ===========================
-// ★ 無操作チェック（全ルーム走査）
-// ===========================
-setInterval(() => {
-  const now = Date.now();
-
-  for (const [room, st] of rooms.entries()) {
-    for (const [socketId, last] of Object.entries(st.lastActivityTimes)) {
-      if (now - last < INACTIVITY_LIMIT_MS) continue;
-
-      const user = st.users[socketId];
-      if (!user) {
-        delete st.lastActivityTimes[socketId];
-        continue;
-      }
-
-      const leftName = user.name;
-
-      delete st.users[socketId];
-      st.typingUsers.delete(socketId);
-      delete st.lastActivityTimes[socketId];
-
-      const clientId = socketClientIds[socketId];
-      if (clientId) {
-        delete socketClientIds[socketId];
-        lastLeaveByClientIdRoom[clientId] = lastLeaveByClientIdRoom[clientId] || {};
-        lastLeaveByClientIdRoom[clientId][room] = Date.now();
-      }
-
-      const s = io.sockets.sockets.get(socketId);
-      if (s) {
-        s.leave(room);
-        s.emit("force-leave", { reason: "timeout" });
-      }
-
-      emitSystem(room, `「${leftName}」さんは一定時間操作がなかったため退室しました。`);
-      broadcastUserList(room);
-      broadcastTypingUsers(room);
-
-      if (Object.keys(st.users).length === 0) {
-        st.chatLog.length = 0;
-        st.typingUsers.clear();
-        console.log(`[${room}] All users left. chatLog cleared (by auto-timeout).`);
-      }
-    }
-  }
-}, 60 * 1000);
-
-// ===========================
-// 管理用シンプルAPI
-// ===========================
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-if (!ADMIN_PASSWORD) {
-  console.error("❌ ADMIN_PASSWORD is not set in .env");
-  process.exit(1);
-}
-
-function requireAdmin(req, res) {
-  const password =
-    req.query.password ||
-    req.headers["x-admin-password"] ||
-    (req.body && req.body.password);
-
-  if (password !== ADMIN_PASSWORD) {
-    res.status(403).json({ error: "forbidden" });
-    return null;
-  }
-  return true;
-}
-
-// ===========================
-// ★ 管理者：オンライン一覧（room指定）
-// GET /api/admin/online?room=main
-// ===========================
-app.get("/api/admin/online", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-
-  const room = normalizeRoomSlug(req.query.room || "main");
-  if (!isRoomAllowed(room)) return res.status(404).json({ error: "room not found" });
-
-  const st = getRoomState(room);
-  const list = [];
-
-  for (const [socketId, u] of Object.entries(st.users)) {
-    const s = io.sockets.sockets.get(socketId);
-    const ip = s ? getSocketIp(s) : "";
-    list.push({
-      room,
-      socketId,
-      name: u.name,
-      color: u.color || null,
-      clientId: socketClientIds[socketId] || null,
-      ip,
-    });
-  }
-
-  res.json({ ok: true, users: list });
-});
-
-// ===========================
-// ★ 管理者：BAN＆キック（roomとsocketIdを指定）
-// POST /api/ban/online { room, socketId, mode, minutes, reason }
-// ===========================
-function adminKickSocket(room, socketId, reasonText = "BAN") {
-  const r = normalizeRoomSlug(room);
-  const st = getRoomState(r);
-
-  const user = st.users[socketId];
-  const s = io.sockets.sockets.get(socketId);
-
-  if (!user) {
-    if (s) s.disconnect(true);
-    return { ok: false, message: "user not found" };
-  }
-
-  const name = user.name;
-
-  delete st.users[socketId];
-  st.typingUsers.delete(socketId);
-  delete st.lastActivityTimes[socketId];
-
-  const clientId = socketClientIds[socketId];
-  if (clientId) {
-    delete socketClientIds[socketId];
-    lastLeaveByClientIdRoom[clientId] = lastLeaveByClientIdRoom[clientId] || {};
-    lastLeaveByClientIdRoom[clientId][r] = Date.now();
-  }
-
-  if (s) {
-    s.leave(r);
-    s.emit("force-leave", { reason: reasonText });
-    s.disconnect(true);
-  }
-
-  emitSystem(r, `「${name}」さんは管理者により退出されました。`);
-  broadcastUserList(r);
-  broadcastTypingUsers(r);
-
-  if (Object.keys(st.users).length === 0) {
-    st.chatLog.length = 0;
-    st.typingUsers.clear();
-    console.log(`[${r}] All users left. chatLog cleared.`);
-  }
-
-  return { ok: true };
-}
-
-app.post("/api/ban/online", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-
-  const { room, socketId, mode, minutes, reason } = req.body || {};
-  const r = normalizeRoomSlug(room || "main");
-  if (!isRoomAllowed(r)) return res.status(404).json({ error: "room not found" });
-  if (!socketId) return res.status(400).json({ error: "socketId required" });
-
-  const s = io.sockets.sockets.get(socketId);
-  const clientId = socketClientIds[socketId] || null;
-  const ip = s ? getSocketIp(s) : "";
-
-  if (!clientId && !ip) return res.status(404).json({ error: "target not found" });
-
-  const m = ["clientId", "ip", "both"].includes(mode) ? mode : "clientId";
-  const durMin = Number(minutes || 0);
-  const expiresAt = durMin > 0 ? Date.now() + durMin * 60 * 1000 : null;
-
-  cleanupExpiredBans();
-
-  function addBan(type, value) {
-    if (!value) return;
-    const exists = (banlist.items || []).some(
-      (it) => it.type === type && it.value === value && (!it.expiresAt || it.expiresAt > Date.now())
-    );
-    if (exists) return;
-
-    const item = {
-      id: uid(),
-      type,
-      value,
-      reason: typeof reason === "string" ? reason.trim() : "",
-      expiresAt,
-      createdAt: Date.now(),
-    };
-    banlist.items.push(item);
-  }
-
-  banlist.items = banlist.items || [];
-
-  if (m === "clientId" || m === "both") addBan("clientId", clientId);
-  if (m === "ip" || m === "both") addBan("ip", ip);
-
-  writeJsonSafe(BANLIST_FILE, banlist);
-
-  const kick = adminKickSocket(r, socketId, "banned");
-
-  res.json({
-    ok: true,
-    banned: { mode: m, clientId, ip, expiresAt },
-    kick,
-  });
-});
-
-// ===========================
-// ★ moderation 管理API（全ルーム共通）
-// ===========================
-app.get("/api/moderation", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  res.json(moderation);
-});
-
-app.put("/api/moderation", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-
-  const b = req.body || {};
-  moderation = {
-    maxMsgLen: Number(b.maxMsgLen ?? 300),
-    minIntervalMs: Number(b.minIntervalMs ?? 1000),
-    maxUrlsPerMsg: Number(b.maxUrlsPerMsg ?? 3),
-    blockPII: !!b.blockPII,
-    ngWords: Array.isArray(b.ngWords) ? b.ngWords.map(String) : [],
-    ngRegexes: Array.isArray(b.ngRegexes) ? b.ngRegexes.map(String) : [],
-  };
-
-  writeJsonSafe(MODERATION_FILE, moderation);
-  compileModerationRegexes();
-  res.json({ ok: true });
-});
-
-// ===========================
-// ★ BAN 管理API（全ルーム共通）
-// ===========================
-app.get("/api/ban", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  cleanupExpiredBans();
-  res.json({ items: banlist.items || [] });
-});
-
-app.post("/api/ban", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-
-  const { type, value, reason, expiresAt } = req.body || {};
-  if (!["clientId", "ip"].includes(type)) {
-    return res.status(400).json({ error: "type must be clientId or ip" });
-  }
-  if (!value || typeof value !== "string") {
-    return res.status(400).json({ error: "value required" });
-  }
-
-  cleanupExpiredBans();
-
-  const item = {
-    id: uid(),
-    type,
-    value: value.trim(),
-    reason: typeof reason === "string" ? reason.trim() : "",
-    expiresAt: expiresAt ? Number(expiresAt) : null,
-    createdAt: Date.now(),
-  };
-
-  banlist.items = banlist.items || [];
-  banlist.items.push(item);
-  writeJsonSafe(BANLIST_FILE, banlist);
-
-  res.json({ ok: true, item });
-});
-
-app.delete("/api/ban/:id", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-
-  const id = String(req.params.id || "");
-  banlist.items = (banlist.items || []).filter((it) => it.id !== id);
-  writeJsonSafe(BANLIST_FILE, banlist);
-  res.json({ ok: true });
-});
-
-// ===========================
 // ★ お題API（部屋別）
-// room=xxx を指定（省略時 main）
 // ===========================
+
+// GET /api/topics?password=...&room=main
 app.get("/api/topics", (req, res) => {
   const password = req.query.password || req.headers["x-admin-password"];
   if (password !== ADMIN_PASSWORD) return res.status(403).json({ error: "forbidden" });
@@ -657,18 +266,32 @@ app.get("/api/topics", (req, res) => {
   res.json(getTopics(room));
 });
 
-app.put("/api/topics/:id", (req, res) => {
-  const { password, text, weight, room, rooms } = req.body || {};
+// POST /api/topics { password, room, text, weight }
+app.post("/api/topics", (req, res) => {
+  const { password, text, weight, rooms } = req.body || {};
   if (password !== ADMIN_PASSWORD) return res.status(403).json({ error: "forbidden" });
 
-  const r = normalizeRoomSlug(room || "main");
-  if (!isRoomAllowed(r)) return res.status(404).json({ error: "room not found" });
+  try {
+    const topic = addTopic("main", text, weight, rooms); // ★ rooms を渡す
+    res.status(201).json(topic);
+  } catch (err) {
+    console.error("Failed to add topic:", err);
+    res.status(400).json({ error: err.message || "bad request" });
+  }
+});
+
+// PUT /api/topics/:id { password, text, weight, rooms }
+app.put("/api/topics/:id", (req, res) => {
+  const { password, text, weight, rooms } = req.body || {};
+  if (password !== ADMIN_PASSWORD) return res.status(403).json({ error: "forbidden" });
 
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: "invalid id" });
 
   try {
-    const topic = updateTopic(r, id, { text, weight, rooms }); // ★ rooms を渡す
+    // ★ room は不要（全件方式なので id で更新する）
+    // ★ rooms を topics.js に渡すのがポイント
+    const topic = updateTopic("main", id, { text, weight, rooms });
     res.json(topic);
   } catch (err) {
     console.error("Failed to update topic:", err);
@@ -677,32 +300,14 @@ app.put("/api/topics/:id", (req, res) => {
 });
 
 
-app.put("/api/topics/:id", (req, res) => {
-  const { password, text, weight, room } = req.body || {};
-  if (password !== ADMIN_PASSWORD) return res.status(403).json({ error: "forbidden" });
-
-  const r = normalizeRoomSlug(room || "main");
-  if (!isRoomAllowed(r)) return res.status(404).json({ error: "room not found" });
-
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) return res.status(400).json({ error: "invalid id" });
-
-  try {
-    const topic = updateTopic(r, id, { text, weight });
-    res.json(topic);
-  } catch (err) {
-    console.error("Failed to update topic:", err);
-    res.status(400).json({ error: err.message || "bad request" });
-  }
-});
-
+// DELETE /api/topics/:id?password=...&room=main
 app.delete("/api/topics/:id", (req, res) => {
   const password =
     req.query.password || req.headers["x-admin-password"] || (req.body && req.body.password);
 
   if (password !== ADMIN_PASSWORD) return res.status(403).json({ error: "forbidden" });
 
-  const r = normalizeRoomSlug((req.query.room || (req.body && req.body.room) || "main"));
+  const r = normalizeRoomSlug(req.query.room || (req.body && req.body.room) || "main");
   if (!isRoomAllowed(r)) return res.status(404).json({ error: "room not found" });
 
   const id = Number(req.params.id);
