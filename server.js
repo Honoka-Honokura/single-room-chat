@@ -1,12 +1,7 @@
-// server.js
+// server.js（/r/:slug 複数部屋・完全分離版）
 require("dotenv").config();
-process.on("uncaughtException", (err) => {
-  console.error("uncaughtException:", err);
-});
-
-process.on("unhandledRejection", (err) => {
-  console.error("unhandledRejection:", err);
-});
+process.on("uncaughtException", (err) => console.error("uncaughtException:", err));
+process.on("unhandledRejection", (err) => console.error("unhandledRejection:", err));
 
 const express = require("express");
 const app = express();
@@ -18,36 +13,27 @@ const crypto = require("crypto");
 
 // ★ Socket.io：スマホ/タブ切替での不安定さを少しでも軽減
 const io = new Server(http, {
-  // タブ切替/省電力で止まりがちな環境を想定して余裕を持たせる
   pingInterval: 25000,
   pingTimeout: 45000,
-
-  // iOS/回線で websocket が落ちる時の保険
   transports: ["websocket", "polling"],
   upgradeTimeout: 20000,
-
-  // メッセージ圧縮でCPU負荷が上がることがある（小規模ならOFFでもOK）
   perMessageDeflate: false,
-
-  // （使えるSocket.ioバージョンなら）復帰時に取りこぼしを自動回収
-  // ※もし起動エラーになるならこの block は外してOK（pollが保険になってる）
   connectionStateRecovery: {
-    maxDisconnectionDuration: 2 * 60 * 1000, // 2分まで復帰扱い
-    skipMiddlewares: true
-  }
+    maxDisconnectionDuration: 2 * 60 * 1000,
+    skipMiddlewares: true,
+  },
 });
 
-
-// ★ お題ガチャ用のモジュール（永続化＋編集・削除対応）
-const { drawTopic, getTopics, addTopic, updateTopic, deleteTopic } = require("./topics");
-
-// ★ お題ガチャ専用クールダウン（ミリ秒）
-const TOPIC_COOLDOWN_MS = 5000; // 5秒
+// public フォルダを静的配信
+app.use(express.static("public"));
+// JSONボディを受け取るため
+app.use(express.json());
 
 // ★ キャッシュ対策（HTML/JS/CSS）
 app.use((req, res, next) => {
   if (
     req.path === "/" ||
+    req.path.startsWith("/r/") ||
     req.path.endsWith(".html") ||
     req.path.endsWith(".js") ||
     req.path.endsWith(".css")
@@ -57,16 +43,49 @@ app.use((req, res, next) => {
   next();
 });
 
-// public フォルダを静的配信
-app.use(express.static("public"));
-// JSONボディを受け取るため
-app.use(express.json());
+// ===========================
+// ★ ルーム許可リスト（存在バレ防止）
+// ===========================
+const ALLOWED_ROOMS = new Set(
+  String(process.env.ROOM_SLUGS || "main")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+);
 
-// 1部屋だけ使うので、部屋名は固定
-const ROOM_NAME = "main-room";
+function normalizeRoomSlug(slug) {
+  const s = String(slug || "main").trim();
+  // slugの安全化（変な文字を落とす）
+  const safe = s.replace(/[^a-zA-Z0-9_-]/g, "");
+  return safe || "main";
+}
+
+function isRoomAllowed(slug) {
+  const r = normalizeRoomSlug(slug);
+  return ALLOWED_ROOMS.has(r);
+}
+
+// / で mainへ
+app.get("/", (req, res) => {
+  res.redirect("/r/main");
+});
+
+// /r/:slug で部屋を切り分け（存在しないslugは404）
+app.get("/r/:slug", (req, res) => {
+  const room = normalizeRoomSlug(req.params.slug);
+  if (!isRoomAllowed(room)) return res.status(404).send("Not Found");
+
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
 
 // ===========================
-// ★ moderation / ban 永続化
+// ★ お題ガチャ（部屋別）
+// ===========================
+const { drawTopic, getTopics, addTopic, updateTopic, deleteTopic } = require("./topics");
+const TOPIC_COOLDOWN_MS = 5000;
+
+// ===========================
+// ★ moderation / ban 永続化（全ルーム共通）
 // ===========================
 const MODERATION_FILE = path.join(__dirname, "moderation.json");
 const BANLIST_FILE = path.join(__dirname, "banlist.json");
@@ -96,14 +115,16 @@ let moderation = readJsonSafe(MODERATION_FILE, {
   maxUrlsPerMsg: 3,
   blockPII: true,
   ngWords: [],
-  ngRegexes: []
+  ngRegexes: [],
 });
 
-let banlist = readJsonSafe(BANLIST_FILE, {
-  items: []
-});
+let banlist = readJsonSafe(BANLIST_FILE, { items: [] });
 
 let compiledNgRegexes = [];
+function normalizeForCheck(text) {
+  if (!text) return "";
+  return text.toString().normalize("NFKC").toLowerCase();
+}
 function compileModerationRegexes() {
   compiledNgRegexes = [];
   for (const s of moderation.ngRegexes || []) {
@@ -123,7 +144,6 @@ function cleanupExpiredBans() {
 }
 
 function getSocketIp(socket) {
-  // nginx / Cloudflare などが前段にある場合は x-forwarded-for が入る
   const xf = socket.handshake.headers["x-forwarded-for"];
   if (xf) return String(xf).split(",")[0].trim();
   return socket.handshake.address || "";
@@ -136,12 +156,6 @@ function isBanned(clientId, ip) {
     if (it.type === "ip" && ip && it.value === ip) return true;
   }
   return false;
-}
-
-// URL数（既存の URL_REGEX があるので count 用だけ追加）
-function countUrls(text) {
-  const m = String(text || "").match(/https?:\/\/[^\s]+/gi);
-  return m ? m.length : 0;
 }
 
 function containsNgWordByModeration(text) {
@@ -162,102 +176,22 @@ function containsNgWordByModeration(text) {
   return false;
 }
 
-// 接続中ユーザー一覧: { socket.id: { name, color } }
-const users = {};
-
-// 「入力中」のユーザー一覧: Set<socket.id>
-const typingUsers = new Set();
-
-// チャットログ（メモリ上に一時保存）
-const chatLog = [];
-
-// ★ ログに連番IDを付ける（ポーリングの差分取得に使う）
-let nextMessageId = 1;
-
-// ★ ロングポーリング待機者
-const pollWaiters = new Set(); // { sinceId, res, timer }
-const POLL_TIMEOUT_MS = 25000; // 25秒
-
-// 最大人数
-const MAX_USERS = 10;
-
-// 10分（ミリ秒）
-const AUTO_LEAVE_MS = 10 * 60 * 1000;
-
-// clientId ごとの最後のアクション時刻
-const lastActionTimeByClientId = {};
-
-// ★ お題ガチャ専用：clientId ごとの最後のガチャ時間
-const lastTopicTimeByClientId = {};
-
-// ★ socket.id → clientId の対応
-const socketClientIds = {};
-
-// ★ clientId ごとの「最後に *意図せず* 退室した時刻」
-const lastLeaveByClientId = {};
-
 // URL貼りすぎ防止
 const URL_REGEX = /(https?:\/\/[^\s]+)/gi;
-
-// 危険・スパムとみなすドメイン
 const BLOCKED_URL_DOMAINS = ["bit.ly", "t.co", "discord.gg", "goo.gl", "tinyurl.com"];
-
-// NGワードチェック用
-function normalizeForCheck(text) {
-  if (!text) return "";
-  return text.toString().normalize("NFKC").toLowerCase();
-}
-
-const NG_WORDS = [
-  "殺す",
-  "死ね",
-  "自殺",
-  "じさつ",
-  "誘拐",
-  "ゆうかい",
-  "障害者",
-  "知的障害",
-  "ガイジ",
-  "池沼",
-  "バカ",
-  "アホ",
-  "消えろ",
-  "投資しませんか",
-  "簡単に稼げ",
-  "出会い系",
-  "出会いサイト",
-  "sex",
-  "porn",
-];
-
-function containsNgWord(text) {
-  const normalized = normalizeForCheck(text);
-  return NG_WORDS.some((word) => normalized.includes(word));
-}
 
 // 個人情報検出
 const EMAIL_REGEX = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
-
 const PHONE_REGEXES = [/0\d{1,4}-\d{1,4}-\d{3,4}/, /\b0\d{9,10}\b/];
 
 function containsPersonalInfo(text) {
   if (!text) return false;
-
   const normalized = normalizeForCheck(text);
-
   if (EMAIL_REGEX.test(normalized)) return true;
   for (const re of PHONE_REGEXES) {
     if (re.test(normalized)) return true;
   }
   return false;
-}
-
-// 無操作タイマー
-const lastActivityTimes = {};
-const INACTIVITY_LIMIT_MS = 10 * 60 * 1000;
-
-function touchActivity(socketId) {
-  lastActivityTimes[socketId] = Date.now();
 }
 
 // 時刻文字列
@@ -269,54 +203,87 @@ function getTimeString() {
   });
 }
 
-// ★ 性別記号を末尾に付与（サーバ側で強制）
-// gender: "male" | "female"
+// 性別記号
 function applyGenderMark(name, gender) {
   const base = String(name || "").trim();
-
-  // 二重付与しない（既に末尾に付いてたらそのまま）
   if (base.endsWith("♂") || base.endsWith("♀")) return base;
-
   if (gender === "male") return base + "♂";
   if (gender === "female") return base + "♀";
   return base;
 }
 
-// 共通の連投チェック関数（moderation版）
-function checkRateLimit(clientId) {
-  if (!clientId) return 0;
+// ===========================
+// ★ ルームごとの状態（完全分離）
+// ===========================
+const rooms = new Map();
+function getRoomState(roomSlug) {
+  const room = normalizeRoomSlug(roomSlug);
+  if (!rooms.has(room)) {
+    rooms.set(room, {
+      users: {},                 // { socketId: { name, color, gender } }
+      typingUsers: new Set(),    // Set<socketId>
+      chatLog: [],               // {id,type,time,...} 最大50
+      nextMessageId: 1,
+      pollWaiters: new Set(),    // { sinceId, res, timer }
+      lastActivityTimes: {},     // { socketId: time }
+    });
+  }
+  return rooms.get(room);
+}
 
+// ロングポーリング設定
+const POLL_TIMEOUT_MS = 25000;
+
+// 最大人数（部屋ごと）
+const MAX_USERS = 10;
+
+// 無操作タイムアウト（部屋ごと）
+const INACTIVITY_LIMIT_MS = 10 * 60 * 1000; // 10分
+
+// ★ グローバル（ルーム跨ぎで共有）
+// socket.id -> clientId
+const socketClientIds = {};
+
+// 再入室判定（clientId×room）
+const lastLeaveByClientIdRoom = {}; // { [clientId]: { [room]: time } }
+
+// 連投制限（clientId×room）
+const lastActionTimeByKey = {}; // { ["room:clientId"]: time }
+
+// お題ガチャクールダウン（clientId×room）
+const lastTopicTimeByKey = {}; // { ["room:clientId"]: time }
+
+function keyOf(room, clientId) {
+  return `${room}:${clientId}`;
+}
+
+function checkRateLimit(room, clientId) {
+  if (!clientId) return 0;
   const now = Date.now();
-  const last = lastActionTimeByClientId[clientId] || 0;
+  const k = keyOf(room, clientId);
+  const last = lastActionTimeByKey[k] || 0;
   const diff = now - last;
 
   const min = Number(moderation?.minIntervalMs ?? 1000);
+  if (diff < min) return min - diff;
 
-  if (diff < min) {
-    return min - diff;
-  }
-
-  lastActionTimeByClientId[clientId] = now;
+  lastActionTimeByKey[k] = now;
   return 0;
 }
 
+function pushLog(room, entry) {
+  const st = getRoomState(room);
 
-// ★ chatLogに追加しつつ、ロングポーリング待機者にも配る
-function pushLog(entry) {
-  const e = {
-    id: nextMessageId++,
-    ...entry,
-  };
-
-  chatLog.push(e);
-  if (chatLog.length > 50) chatLog.shift();
+  const e = { id: st.nextMessageId++, ...entry };
+  st.chatLog.push(e);
+  if (st.chatLog.length > 50) st.chatLog.shift();
 
   // ロングポーリング待機者に新着を返す
-  for (const w of Array.from(pollWaiters)) {
-    const news = chatLog.filter((m) => m.id > w.sinceId);
+  for (const w of Array.from(st.pollWaiters)) {
+    const news = st.chatLog.filter((m) => m.id > w.sinceId);
     if (news.length > 0) {
       clearTimeout(w.timer);
-      pollWaiters.delete(w);
+      st.pollWaiters.delete(w);
       w.res.json({ ok: true, messages: news, serverTime: Date.now() });
     }
   }
@@ -325,28 +292,14 @@ function pushLog(entry) {
 }
 
 /**
- * ✅ emitLog(type, payload)
- * - pushLogで必ずidを付ける
- * - Socketイベントもここで統一して送る
- *
+ * emitLog(type, payload, opts)
  * type: "system" | "chat" | "dice" | "topic"
- * payload:
- *   system: { text }
- *   chat/dice: { name, text, color }
- *   topic: { name, topic }
- *
- * opts:
- *   { fromId?: string, room?: string }
  */
 function emitLog(type, payload, opts = {}) {
+  const room = normalizeRoomSlug(opts.room || "main");
   const time = getTimeString();
-  const room = opts.room || ROOM_NAME;
 
-  const saved = pushLog({
-    type,
-    time,
-    ...payload,
-  });
+  const saved = pushLog(room, { type, time, ...payload });
 
   if (type === "topic") {
     io.to(room).emit("topic-result", {
@@ -380,61 +333,86 @@ function emitLog(type, payload, opts = {}) {
   return saved;
 }
 
-// ★ 互換用（読みやすさのため残す）
-function emitSystem(text) {
-  return emitLog("system", { text });
+function emitSystem(room, text) {
+  return emitLog("system", { text }, { room });
 }
 
-function broadcastUserList() {
-  const userList = Object.values(users).map((u) => u.name);
-  io.to(ROOM_NAME).emit("user-list", userList);
+function broadcastUserList(room) {
+  const r = normalizeRoomSlug(room);
+  const st = getRoomState(r);
+  const userList = Object.values(st.users).map((u) => u.name);
+  io.to(r).emit("user-list", userList);
 }
 
-function broadcastTypingUsers() {
-  const names = Array.from(typingUsers)
-    .map((id) => users[id]?.name)
+function broadcastTypingUsers(room) {
+  const r = normalizeRoomSlug(room);
+  const st = getRoomState(r);
+  const names = Array.from(st.typingUsers)
+    .map((id) => st.users[id]?.name)
     .filter(Boolean);
-  io.to(ROOM_NAME).emit("typing-users", names);
+  io.to(r).emit("typing-users", names);
 }
 
-// 無操作チェック
+function touchActivity(room, socketId) {
+  const st = getRoomState(room);
+  st.lastActivityTimes[socketId] = Date.now();
+}
+
+// 参照ヘッダから room を推定（入室前のオンライン人数表示用）
+function getRoomFromHandshake(socket) {
+  try {
+    const ref = socket.handshake.headers.referer || "";
+    const u = new URL(ref);
+    const m = u.pathname.match(/^\/r\/([^\/]+)/);
+    if (m && m[1]) return normalizeRoomSlug(decodeURIComponent(m[1]));
+  } catch (_) {}
+  return "main";
+}
+
+// ===========================
+// ★ 無操作チェック（全ルーム走査）
+// ===========================
 setInterval(() => {
   const now = Date.now();
 
-  for (const [socketId, last] of Object.entries(lastActivityTimes)) {
-    if (now - last < INACTIVITY_LIMIT_MS) continue;
+  for (const [room, st] of rooms.entries()) {
+    for (const [socketId, last] of Object.entries(st.lastActivityTimes)) {
+      if (now - last < INACTIVITY_LIMIT_MS) continue;
 
-    const user = users[socketId];
-    if (!user) {
-      delete lastActivityTimes[socketId];
-      continue;
-    }
+      const user = st.users[socketId];
+      if (!user) {
+        delete st.lastActivityTimes[socketId];
+        continue;
+      }
 
-    const leftName = user.name;
-    delete users[socketId];
-    typingUsers.delete(socketId);
-    delete lastActivityTimes[socketId];
+      const leftName = user.name;
 
-    const clientId = socketClientIds[socketId];
-    if (clientId) {
-      delete socketClientIds[socketId];
-    }
+      delete st.users[socketId];
+      st.typingUsers.delete(socketId);
+      delete st.lastActivityTimes[socketId];
 
-    const s = io.sockets.sockets.get(socketId);
-    if (s) {
-      s.leave(ROOM_NAME);
-      s.emit("force-leave", { reason: "timeout" });
-    }
+      const clientId = socketClientIds[socketId];
+      if (clientId) {
+        delete socketClientIds[socketId];
+        lastLeaveByClientIdRoom[clientId] = lastLeaveByClientIdRoom[clientId] || {};
+        lastLeaveByClientIdRoom[clientId][room] = Date.now();
+      }
 
-    emitSystem(`「${leftName}」さんは一定時間操作がなかったため退室しました。`);
+      const s = io.sockets.sockets.get(socketId);
+      if (s) {
+        s.leave(room);
+        s.emit("force-leave", { reason: "timeout" });
+      }
 
-    broadcastUserList();
-    broadcastTypingUsers();
+      emitSystem(room, `「${leftName}」さんは一定時間操作がなかったため退室しました。`);
+      broadcastUserList(room);
+      broadcastTypingUsers(room);
 
-    if (Object.keys(users).length === 0) {
-      chatLog.length = 0;
-      typingUsers.clear();
-      console.log("All users left. chatLog cleared (by auto-timeout).");
+      if (Object.keys(st.users).length === 0) {
+        st.chatLog.length = 0;
+        st.typingUsers.clear();
+        console.log(`[${room}] All users left. chatLog cleared (by auto-timeout).`);
+      }
     }
   }
 }, 60 * 1000);
@@ -442,10 +420,7 @@ setInterval(() => {
 // ===========================
 // 管理用シンプルAPI
 // ===========================
-
-// ★ 本番では .env などで外出し推奨
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-
 if (!ADMIN_PASSWORD) {
   console.error("❌ ADMIN_PASSWORD is not set in .env");
   process.exit(1);
@@ -465,23 +440,28 @@ function requireAdmin(req, res) {
 }
 
 // ===========================
-// ★ 管理者：オンライン一覧
+// ★ 管理者：オンライン一覧（room指定）
+// GET /api/admin/online?room=main
 // ===========================
 app.get("/api/admin/online", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
+  const room = normalizeRoomSlug(req.query.room || "main");
+  if (!isRoomAllowed(room)) return res.status(404).json({ error: "room not found" });
+
+  const st = getRoomState(room);
   const list = [];
 
-  for (const [socketId, u] of Object.entries(users)) {
+  for (const [socketId, u] of Object.entries(st.users)) {
     const s = io.sockets.sockets.get(socketId);
     const ip = s ? getSocketIp(s) : "";
-
     list.push({
+      room,
       socketId,
       name: u.name,
       color: u.color || null,
       clientId: socketClientIds[socketId] || null,
-      ip
+      ip,
     });
   }
 
@@ -489,13 +469,16 @@ app.get("/api/admin/online", (req, res) => {
 });
 
 // ===========================
-// ★ 管理者：オンラインからBAN（clientId/ip/both）＋キック
+// ★ 管理者：BAN＆キック（roomとsocketIdを指定）
+// POST /api/ban/online { room, socketId, mode, minutes, reason }
 // ===========================
-function adminKickSocket(socketId, reasonText = "BAN") {
-  const user = users[socketId];
+function adminKickSocket(room, socketId, reasonText = "BAN") {
+  const r = normalizeRoomSlug(room);
+  const st = getRoomState(r);
+
+  const user = st.users[socketId];
   const s = io.sockets.sockets.get(socketId);
 
-  // 既にいない
   if (!user) {
     if (s) s.disconnect(true);
     return { ok: false, message: "user not found" };
@@ -503,34 +486,31 @@ function adminKickSocket(socketId, reasonText = "BAN") {
 
   const name = user.name;
 
-  // サーバー内の状態を掃除（leave/timeout と同等の片付け）
-  delete users[socketId];
-  typingUsers.delete(socketId);
-  delete lastActivityTimes[socketId];
+  delete st.users[socketId];
+  st.typingUsers.delete(socketId);
+  delete st.lastActivityTimes[socketId];
 
   const clientId = socketClientIds[socketId];
   if (clientId) {
     delete socketClientIds[socketId];
-    lastLeaveByClientId[clientId] = Date.now();
+    lastLeaveByClientIdRoom[clientId] = lastLeaveByClientIdRoom[clientId] || {};
+    lastLeaveByClientIdRoom[clientId][r] = Date.now();
   }
 
   if (s) {
-    s.leave(ROOM_NAME);
-    // 本人には理由を伝えてから切る（最後の通知）
+    s.leave(r);
     s.emit("force-leave", { reason: reasonText });
     s.disconnect(true);
   }
 
-  // ルームへ通知（好みで文言変えてOK）
-  emitSystem(`「${name}」さんは管理者により退出されました。`);
+  emitSystem(r, `「${name}」さんは管理者により退出されました。`);
+  broadcastUserList(r);
+  broadcastTypingUsers(r);
 
-  broadcastUserList();
-  broadcastTypingUsers();
-
-  if (Object.keys(users).length === 0) {
-    chatLog.length = 0;
-    typingUsers.clear();
-    console.log("All users left. chatLog cleared.");
+  if (Object.keys(st.users).length === 0) {
+    st.chatLog.length = 0;
+    st.typingUsers.clear();
+    console.log(`[${r}] All users left. chatLog cleared.`);
   }
 
   return { ok: true };
@@ -539,17 +519,16 @@ function adminKickSocket(socketId, reasonText = "BAN") {
 app.post("/api/ban/online", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
-  const { socketId, mode, minutes, reason } = req.body || {};
+  const { room, socketId, mode, minutes, reason } = req.body || {};
+  const r = normalizeRoomSlug(room || "main");
+  if (!isRoomAllowed(r)) return res.status(404).json({ error: "room not found" });
   if (!socketId) return res.status(400).json({ error: "socketId required" });
 
   const s = io.sockets.sockets.get(socketId);
   const clientId = socketClientIds[socketId] || null;
   const ip = s ? getSocketIp(s) : "";
 
-  // 対象がいない（または切断済み）
-  if (!clientId && !ip) {
-    return res.status(404).json({ error: "target not found" });
-  }
+  if (!clientId && !ip) return res.status(404).json({ error: "target not found" });
 
   const m = ["clientId", "ip", "both"].includes(mode) ? mode : "clientId";
   const durMin = Number(minutes || 0);
@@ -559,8 +538,9 @@ app.post("/api/ban/online", (req, res) => {
 
   function addBan(type, value) {
     if (!value) return;
-    // 重複BAN防止
-    const exists = (banlist.items || []).some(it => it.type === type && it.value === value && (!it.expiresAt || it.expiresAt > Date.now()));
+    const exists = (banlist.items || []).some(
+      (it) => it.type === type && it.value === value && (!it.expiresAt || it.expiresAt > Date.now())
+    );
     if (exists) return;
 
     const item = {
@@ -569,7 +549,7 @@ app.post("/api/ban/online", (req, res) => {
       value,
       reason: typeof reason === "string" ? reason.trim() : "",
       expiresAt,
-      createdAt: Date.now()
+      createdAt: Date.now(),
     };
     banlist.items.push(item);
   }
@@ -581,28 +561,23 @@ app.post("/api/ban/online", (req, res) => {
 
   writeJsonSafe(BANLIST_FILE, banlist);
 
-  // 即キック
-  const kick = adminKickSocket(socketId, "banned");
+  const kick = adminKickSocket(r, socketId, "banned");
 
   res.json({
     ok: true,
     banned: { mode: m, clientId, ip, expiresAt },
-    kick
+    kick,
   });
 });
 
-
 // ===========================
-// ★ moderation 管理API
+// ★ moderation 管理API（全ルーム共通）
 // ===========================
-
-// 取得
 app.get("/api/moderation", (req, res) => {
   if (!requireAdmin(req, res)) return;
   res.json(moderation);
 });
 
-// 更新（永続化して即反映）
 app.put("/api/moderation", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
@@ -613,7 +588,7 @@ app.put("/api/moderation", (req, res) => {
     maxUrlsPerMsg: Number(b.maxUrlsPerMsg ?? 3),
     blockPII: !!b.blockPII,
     ngWords: Array.isArray(b.ngWords) ? b.ngWords.map(String) : [],
-    ngRegexes: Array.isArray(b.ngRegexes) ? b.ngRegexes.map(String) : []
+    ngRegexes: Array.isArray(b.ngRegexes) ? b.ngRegexes.map(String) : [],
   };
 
   writeJsonSafe(MODERATION_FILE, moderation);
@@ -622,17 +597,14 @@ app.put("/api/moderation", (req, res) => {
 });
 
 // ===========================
-// ★ BAN 管理API
+// ★ BAN 管理API（全ルーム共通）
 // ===========================
-
-// 一覧
 app.get("/api/ban", (req, res) => {
   if (!requireAdmin(req, res)) return;
   cleanupExpiredBans();
   res.json({ items: banlist.items || [] });
 });
 
-// 追加
 app.post("/api/ban", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
@@ -652,7 +624,7 @@ app.post("/api/ban", (req, res) => {
     value: value.trim(),
     reason: typeof reason === "string" ? reason.trim() : "",
     expiresAt: expiresAt ? Number(expiresAt) : null,
-    createdAt: Date.now()
+    createdAt: Date.now(),
   };
 
   banlist.items = banlist.items || [];
@@ -662,7 +634,6 @@ app.post("/api/ban", (req, res) => {
   res.json({ ok: true, item });
 });
 
-// 解除
 app.delete("/api/ban/:id", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
@@ -672,24 +643,29 @@ app.delete("/api/ban/:id", (req, res) => {
   res.json({ ok: true });
 });
 
-
-// 一覧取得
+// ===========================
+// ★ お題API（部屋別）
+// room=xxx を指定（省略時 main）
+// ===========================
 app.get("/api/topics", (req, res) => {
   const password = req.query.password || req.headers["x-admin-password"];
-  if (password !== ADMIN_PASSWORD) {
-    return res.status(403).json({ error: "forbidden" });
-  }
-  res.json(getTopics());
+  if (password !== ADMIN_PASSWORD) return res.status(403).json({ error: "forbidden" });
+
+  const room = normalizeRoomSlug(req.query.room || "main");
+  if (!isRoomAllowed(room)) return res.status(404).json({ error: "room not found" });
+
+  res.json(getTopics(room));
 });
 
-// 追加
 app.post("/api/topics", (req, res) => {
-  const { password, text, weight } = req.body || {};
-  if (password !== ADMIN_PASSWORD) {
-    return res.status(403).json({ error: "forbidden" });
-  }
+  const { password, text, weight, room } = req.body || {};
+  if (password !== ADMIN_PASSWORD) return res.status(403).json({ error: "forbidden" });
+
+  const r = normalizeRoomSlug(room || "main");
+  if (!isRoomAllowed(r)) return res.status(404).json({ error: "room not found" });
+
   try {
-    const topic = addTopic(text, weight);
+    const topic = addTopic(r, text, weight);
     res.status(201).json(topic);
   } catch (err) {
     console.error("Failed to add topic:", err);
@@ -697,20 +673,18 @@ app.post("/api/topics", (req, res) => {
   }
 });
 
-// 更新
 app.put("/api/topics/:id", (req, res) => {
-  const { password, text, weight } = req.body || {};
-  if (password !== ADMIN_PASSWORD) {
-    return res.status(403).json({ error: "forbidden" });
-  }
+  const { password, text, weight, room } = req.body || {};
+  if (password !== ADMIN_PASSWORD) return res.status(403).json({ error: "forbidden" });
+
+  const r = normalizeRoomSlug(room || "main");
+  if (!isRoomAllowed(r)) return res.status(404).json({ error: "room not found" });
 
   const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    return res.status(400).json({ error: "invalid id" });
-  }
+  if (!Number.isInteger(id)) return res.status(400).json({ error: "invalid id" });
 
   try {
-    const topic = updateTopic(id, { text, weight });
+    const topic = updateTopic(r, id, { text, weight });
     res.json(topic);
   } catch (err) {
     console.error("Failed to update topic:", err);
@@ -718,22 +692,20 @@ app.put("/api/topics/:id", (req, res) => {
   }
 });
 
-// 削除
 app.delete("/api/topics/:id", (req, res) => {
   const password =
     req.query.password || req.headers["x-admin-password"] || (req.body && req.body.password);
 
-  if (password !== ADMIN_PASSWORD) {
-    return res.status(403).json({ error: "forbidden" });
-  }
+  if (password !== ADMIN_PASSWORD) return res.status(403).json({ error: "forbidden" });
+
+  const r = normalizeRoomSlug((req.query.room || (req.body && req.body.room) || "main"));
+  if (!isRoomAllowed(r)) return res.status(404).json({ error: "room not found" });
 
   const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    return res.status(400).json({ error: "invalid id" });
-  }
+  if (!Number.isInteger(id)) return res.status(400).json({ error: "invalid id" });
 
   try {
-    const removed = deleteTopic(id);
+    const removed = deleteTopic(r, id);
     res.json({ ok: true, removed });
   } catch (err) {
     console.error("Failed to delete topic:", err);
@@ -742,267 +714,285 @@ app.delete("/api/topics/:id", (req, res) => {
 });
 
 // ===========================
-// ★ ロングポーリング用API（ルブル寄り）
+// ★ ロングポーリング用API（部屋別）
 // ===========================
-
-// 初回：最新ログ取得
 app.get("/api/log", (req, res) => {
-  res.json({ ok: true, messages: chatLog, serverTime: Date.now() });
+  const room = normalizeRoomSlug(req.query.room || "main");
+  if (!isRoomAllowed(room)) return res.status(404).json({ error: "room not found" });
+
+  const st = getRoomState(room);
+  res.json({ ok: true, messages: st.chatLog, serverTime: Date.now() });
 });
 
-// 差分：新着が来るまで最大25秒待つ
 app.get("/api/poll", (req, res) => {
+  const room = normalizeRoomSlug(req.query.room || "main");
+  if (!isRoomAllowed(room)) return res.status(404).json({ error: "room not found" });
+
+  const st = getRoomState(room);
   const sinceId = Number(req.query.since || 0);
 
-  // 既に新着があるなら即返す
-  const news = chatLog.filter((m) => m.id > sinceId);
+  const news = st.chatLog.filter((m) => m.id > sinceId);
   if (news.length > 0) {
     return res.json({ ok: true, messages: news, serverTime: Date.now() });
   }
 
-  // なければ待つ
   const waiter = {
     sinceId,
     res,
     timer: setTimeout(() => {
-      pollWaiters.delete(waiter);
+      st.pollWaiters.delete(waiter);
       res.json({ ok: true, messages: [], serverTime: Date.now() });
     }, POLL_TIMEOUT_MS),
   };
-  pollWaiters.add(waiter);
+  st.pollWaiters.add(waiter);
 
-  // 途中でクライアントが切れたら掃除
   req.on("close", () => {
     clearTimeout(waiter.timer);
-    pollWaiters.delete(waiter);
+    st.pollWaiters.delete(waiter);
   });
 });
 
 // ===========================
-// Socket.io メイン処理
+// Socket.io メイン処理（部屋対応）
 // ===========================
 io.on("connection", (socket) => {
   console.log("connected:", socket.id);
 
-  const currentUsers = Object.values(users).map((u) => u.name);
-  socket.emit("user-list", currentUsers);
+  // 入室前でもオンライン人数を出したいので、refererから部屋推定して送る
+  const roomHint = getRoomFromHandshake(socket);
+  if (isRoomAllowed(roomHint)) {
+    const st = getRoomState(roomHint);
+    const currentUsers = Object.values(st.users).map((u) => u.name);
+    socket.emit("user-list", currentUsers);
+  } else {
+    socket.emit("user-list", []);
+  }
 
   // 入室
   socket.on("join", (payload) => {
-    if (users[socket.id]) return;
+    // payload: { roomSlug, name, color, clientId, gender }
+    let room = "main";
+    let rawName = "";
+    let color = null;
+    let clientId = null;
+    let gender = "";
 
-    const currentCount = Object.keys(users).length;
+    if (typeof payload === "string" || payload === undefined || payload === null) {
+      rawName = payload || "";
+    } else {
+      room = normalizeRoomSlug(payload.roomSlug || "main");
+      rawName = payload.name || "";
+      color = payload.color || null;
+      clientId = payload.clientId || null;
+      gender = payload.gender || "";
+    }
+
+    if (!isRoomAllowed(room)) {
+      socket.emit("system-message", { time: getTimeString(), text: "この部屋は存在しません。" });
+      socket.disconnect(true);
+      return;
+    }
+
+    const st = getRoomState(room);
+    if (st.users[socket.id]) return;
+
+    const currentCount = Object.keys(st.users).length;
     if (currentCount >= MAX_USERS) {
       socket.emit("room-full");
       return;
     }
 
-    let rawName = "";
-    let color = null;
-    let clientId = null;
-    let gender = ""; // ★追加
-
-    if (typeof payload === "string" || payload === undefined || payload === null) {
-    rawName = payload || "";
-    } else {
-    rawName = payload.name || "";
-    color = payload.color || null;
-    clientId = payload.clientId || null;
-    gender = payload.gender || ""; // ★追加
-    }
-
-
     if (!clientId) clientId = socket.id;
     socketClientIds[socket.id] = clientId;
 
-    // ★ BAN判定（clientId / ip）
+    // BAN判定
     const ip = getSocketIp(socket);
     if (isBanned(clientId, ip)) {
-      socket.emit("system-message", {
-        time: getTimeString(),
-        text: "この端末（または回線）はBANされています。",
-      });
+      socket.emit("system-message", { time: getTimeString(), text: "この端末（または回線）はBANされています。" });
       socket.disconnect(true);
       return;
     }
 
-
     const baseName =
-    rawName && rawName.trim() ? rawName.trim() : "user-" + Math.floor(Math.random() * 1000);
+      rawName && rawName.trim() ? rawName.trim() : "user-" + Math.floor(Math.random() * 1000);
 
-    // ★ ここでサーバ側が最終確定（クライアント改ざん対策）
     const displayName = applyGenderMark(baseName, gender);
 
-    // ★ gender も保存（change-nameで使う）
-    users[socket.id] = { name: displayName, color, gender };
+    st.users[socket.id] = { name: displayName, color, gender };
 
-    socket.join(ROOM_NAME);
+    socket.join(room);
+    socket.data.roomSlug = room;
 
-    console.log(displayName, "joined (clientId:", clientId, ")");
+    console.log(displayName, "joined room:", room, "(clientId:", clientId, ")");
 
+    // 再入室判定（部屋別）
     const now = Date.now();
     let shouldAnnounceJoin = true;
-    const lastLeave = lastLeaveByClientId[clientId];
 
-    if (lastLeave && now - lastLeave < AUTO_LEAVE_MS) {
+    const lastLeaveMap = lastLeaveByClientIdRoom[clientId] || {};
+    const lastLeave = lastLeaveMap[room];
+
+    if (lastLeave && now - lastLeave < INACTIVITY_LIMIT_MS) {
       shouldAnnounceJoin = false;
     }
 
     if (shouldAnnounceJoin) {
-      emitSystem(`「${displayName}」さんが入室しました。`);
+      emitSystem(room, `「${displayName}」さんが入室しました。`);
     }
 
-    // 過去ログを送る（id付き）
-    if (chatLog.length > 0) {
-      socket.emit("chat-log", chatLog);
+    // 過去ログを送る
+    if (st.chatLog.length > 0) {
+      socket.emit("chat-log", st.chatLog);
     }
 
-    broadcastUserList();
-    touchActivity(socket.id);
+    broadcastUserList(room);
+    touchActivity(room, socket.id);
   });
 
   // 名前変更
-    socket.on("change-name", (newName) => {
-    const user = users[socket.id];
+  socket.on("change-name", (newName) => {
+    const room = socket.data.roomSlug;
+    if (!room || !isRoomAllowed(room)) return;
+
+    const st = getRoomState(room);
+    const user = st.users[socket.id];
     if (!user) return;
 
     const oldName = user.name;
-
     const base = (newName || "").trim();
     if (!base) return;
 
-    // ★ gender は join 時に保存したものを使う
     const finalName = applyGenderMark(base, user.gender);
-
     if (finalName === oldName) return;
 
     user.name = finalName;
-    touchActivity(socket.id);
+    touchActivity(room, socket.id);
 
-    emitSystem(`「${oldName}」さんは名前を「${finalName}」に変更しました。`);
-    broadcastUserList();
-    });
-
-
-  // 吹き出し色の変更
-  socket.on("change-color", (newColor) => {
-    const user = users[socket.id];
-    if (!user) return;
-
-    const color = (newColor || "").toString().trim();
-    if (!color) return;
-
-    user.color = color;
-    touchActivity(socket.id);
-
-    emitSystem(`「${user.name}」さんが吹き出し色を変更しました。`);
+    emitSystem(room, `「${oldName}」さんは名前を「${finalName}」に変更しました。`);
+    broadcastUserList(room);
   });
 
-  // メッセージ送信
-socket.on("send-message", (msg) => {
-  try {
-    const user = users[socket.id];
+  // 色変更
+  socket.on("change-color", (newColor) => {
+    const room = socket.data.roomSlug;
+    if (!room || !isRoomAllowed(room)) return;
+
+    const st = getRoomState(room);
+    const user = st.users[socket.id];
     if (!user) return;
 
-    const text = (msg || "").toString().trim();
-    if (!text) return;
+    const c = (newColor || "").toString().trim();
+    if (!c) return;
 
-    // moderationの安全な既定値
-    const maxLen = Number(moderation?.maxMsgLen ?? 300);
-    const maxUrls = Number(moderation?.maxUrlsPerMsg ?? 3);
-    const blockPII = !!(moderation?.blockPII ?? true);
+    user.color = c;
+    touchActivity(room, socket.id);
 
-    // 長文
-    if (maxLen > 0 && text.length > maxLen) {
-      socket.emit("system-message", { time: getTimeString(), text: `長すぎます（最大 ${maxLen} 文字）` });
-      return;
-    }
+    emitSystem(room, `「${user.name}」さんが吹き出し色を変更しました。`);
+  });
 
-    // 個人情報
-    if (blockPII && containsPersonalInfo(text)) {
-      socket.emit("system-message", { time: getTimeString(), text: "個人情報（電話番号やメールアドレスなど）は送信できません。" });
-      return;
-    }
+  // メッセージ
+  socket.on("send-message", (msg) => {
+    try {
+      const room = socket.data.roomSlug;
+      if (!room || !isRoomAllowed(room)) return;
 
-    // NGワード（管理画面で変更）
-    if (containsNgWordByModeration(text)) {
-      socket.emit("system-message", { time: getTimeString(), text: "NGワードが含まれているため、送信できません。" });
-      return;
-    }
+      const st = getRoomState(room);
+      const user = st.users[socket.id];
+      if (!user) return;
 
-    // URL上限
-    const urls = text.match(URL_REGEX) || [];
-    if (maxUrls >= 0 && urls.length > maxUrls) {
-      socket.emit("system-message", { time: getTimeString(), text: `1つのメッセージに貼れるURLは最大 ${maxUrls} 件までです。` });
-      return;
-    }
+      const text = (msg || "").toString().trim();
+      if (!text) return;
 
-    // 危険ドメイン
-    if (urls.length > 0) {
-      for (const raw of urls) {
-        const urlStr = raw.startsWith("http") ? raw : `http://${raw}`;
-        const u = new URL(urlStr);
-        const host = u.hostname.toLowerCase();
-        if (BLOCKED_URL_DOMAINS.some((d) => host === d || host.endsWith("." + d))) {
-          socket.emit("system-message", { time: getTimeString(), text: "安全のため、一部の短縮URLや招待リンクは送信できません。" });
-          return;
+      const maxLen = Number(moderation?.maxMsgLen ?? 300);
+      const maxUrls = Number(moderation?.maxUrlsPerMsg ?? 3);
+      const blockPII = !!(moderation?.blockPII ?? true);
+
+      if (maxLen > 0 && text.length > maxLen) {
+        socket.emit("system-message", { time: getTimeString(), text: `長すぎます（最大 ${maxLen} 文字）` });
+        return;
+      }
+
+      if (blockPII && containsPersonalInfo(text)) {
+        socket.emit("system-message", { time: getTimeString(), text: "個人情報（電話番号やメールアドレスなど）は送信できません。" });
+        return;
+      }
+
+      if (containsNgWordByModeration(text)) {
+        socket.emit("system-message", { time: getTimeString(), text: "NGワードが含まれているため、送信できません。" });
+        return;
+      }
+
+      const urls = text.match(URL_REGEX) || [];
+      if (maxUrls >= 0 && urls.length > maxUrls) {
+        socket.emit("system-message", { time: getTimeString(), text: `1つのメッセージに貼れるURLは最大 ${maxUrls} 件までです。` });
+        return;
+      }
+
+      if (urls.length > 0) {
+        for (const raw of urls) {
+          const urlStr = raw.startsWith("http") ? raw : `http://${raw}`;
+          const u = new URL(urlStr);
+          const host = u.hostname.toLowerCase();
+          if (BLOCKED_URL_DOMAINS.some((d) => host === d || host.endsWith("." + d))) {
+            socket.emit("system-message", { time: getTimeString(), text: "安全のため、一部の短縮URLや招待リンクは送信できません。" });
+            return;
+          }
         }
       }
-    }
 
-    // 連投制限（checkRateLimitは moderation.minIntervalMs を使う版を1つだけ残す）
+      const clientId = socketClientIds[socket.id] || socket.id;
+      const waitMs = checkRateLimit(room, clientId);
+      if (waitMs > 0) {
+        socket.emit("rate-limit", { waitMs });
+        return;
+      }
+
+      touchActivity(room, socket.id);
+
+      emitLog("chat", { name: user.name, text, color: user.color || null }, { fromId: socket.id, room });
+    } catch (err) {
+      console.error("send-message error:", err);
+      try {
+        socket.emit("system-message", { time: getTimeString(), text: "送信処理でエラーが発生しました。時間をおいて再試行してください。" });
+      } catch (_) {}
+    }
+  });
+
+  // 1D6
+  socket.on("roll-1d6", () => {
+    const room = socket.data.roomSlug;
+    if (!room || !isRoomAllowed(room)) return;
+
+    const st = getRoomState(room);
+    const user = st.users[socket.id];
+    if (!user) return;
+
     const clientId = socketClientIds[socket.id] || socket.id;
-    const waitMs = checkRateLimit(clientId);
+    const waitMs = checkRateLimit(room, clientId);
     if (waitMs > 0) {
       socket.emit("rate-limit", { waitMs });
       return;
     }
 
-    touchActivity(socket.id);
-
-    emitLog("chat", { name: user.name, text, color: user.color || null }, { fromId: socket.id });
-  } catch (err) {
-    console.error("send-message error:", err);
-    // 落とさず、本人にだけ軽く通知（ログには残さない）
-    try {
-      socket.emit("system-message", { time: getTimeString(), text: "送信処理でエラーが発生しました。時間をおいて再試行してください。" });
-    } catch (_) {}
-  }
-});
-
-    // 1D6
-    socket.on("roll-1d6", () => {
-    const user = users[socket.id];
-    if (!user) return;
-
-    const clientId = socketClientIds[socket.id] || socket.id;
-    const waitMs = checkRateLimit(clientId);
-    if (waitMs > 0) {
-        socket.emit("rate-limit", { waitMs });
-        return;
-    }
-
     const d = Math.floor(Math.random() * 6) + 1;
-
     const name = user.name || "ななし";
     const color = user.color || "#FFFFFF";
     const text = `🎲 ${name} が 1D6 を振った：${d}`;
 
-    emitLog(
-        "dice",
-        { name, text, color },
-        { fromId: socket.id }
-    );
-    });
-
+    emitLog("dice", { name, text, color }, { fromId: socket.id, room });
+  });
 
   // 2D6
   socket.on("roll-dice", () => {
-    const user = users[socket.id];
+    const room = socket.data.roomSlug;
+    if (!room || !isRoomAllowed(room)) return;
+
+    const st = getRoomState(room);
+    const user = st.users[socket.id];
     if (!user) return;
 
     const clientId = socketClientIds[socket.id] || socket.id;
-    const waitMs = checkRateLimit(clientId);
+    const waitMs = checkRateLimit(room, clientId);
     if (waitMs > 0) {
       socket.emit("rate-limit", { waitMs });
       return;
@@ -1016,125 +1006,131 @@ socket.on("send-message", (msg) => {
     const color = user.color || "#FFFFFF";
     const text = `🎲 ${name} が 2D6 を振った：${d1} ＋ ${d2} ＝ ${total}`;
 
-    emitLog(
-      "dice",
-      {
-        name,
-        text,
-        color,
-      },
-      { fromId: socket.id }
-    );
+    emitLog("dice", { name, text, color }, { fromId: socket.id, room });
   });
 
-  // お題ガチャ
+  // お題ガチャ（部屋別topics + クールダウン部屋別）
   socket.on("draw-topic", () => {
-    const user = users[socket.id];
+    const room = socket.data.roomSlug;
+    if (!room || !isRoomAllowed(room)) return;
+
+    const st = getRoomState(room);
+    const user = st.users[socket.id];
     if (!user) return;
 
     const clientId = socketClientIds[socket.id];
     if (!clientId) return;
 
     const now = Date.now();
-
-    const last = lastTopicTimeByClientId[clientId] || 0;
+    const k = keyOf(room, clientId);
+    const last = lastTopicTimeByKey[k] || 0;
     const diff = now - last;
 
     if (diff < TOPIC_COOLDOWN_MS) {
-      const waitMs = TOPIC_COOLDOWN_MS - diff;
-      socket.emit("rate-limit", { waitMs });
+      socket.emit("rate-limit", { waitMs: TOPIC_COOLDOWN_MS - diff });
       return;
     }
 
-    lastTopicTimeByClientId[clientId] = now;
+    lastTopicTimeByKey[k] = now;
 
-    const drawn = drawTopic();
+    const drawn = drawTopic(room);
     if (!drawn) return;
 
     const name = user.name || "匿名";
-    const topicText = drawn.text;
-
-    emitLog("topic", {
-      name,
-      topic: topicText,
-      color: null,
-    });
+    emitLog("topic", { name, topic: drawn.text, color: null }, { room });
   });
 
   // 入力中
   socket.on("typing", (isTyping) => {
-    const user = users[socket.id];
+    const room = socket.data.roomSlug;
+    if (!room || !isRoomAllowed(room)) return;
+
+    const st = getRoomState(room);
+    const user = st.users[socket.id];
     if (!user) return;
 
     if (isTyping) {
-      typingUsers.add(socket.id);
-      touchActivity(socket.id);
+      st.typingUsers.add(socket.id);
+      touchActivity(room, socket.id);
     } else {
-      typingUsers.delete(socket.id);
+      st.typingUsers.delete(socket.id);
     }
-    broadcastTypingUsers();
+    broadcastTypingUsers(room);
   });
 
   // 明示的退室
   socket.on("leave", () => {
-    const user = users[socket.id];
+    const room = socket.data.roomSlug;
+    if (!room || !isRoomAllowed(room)) return;
+
+    const st = getRoomState(room);
+    const user = st.users[socket.id];
     if (!user) return;
 
     const leftName = user.name;
 
     const clientId = socketClientIds[socket.id];
     if (clientId) {
-      lastLeaveByClientId[clientId] = Date.now(); // ★追加（再入室判定のため）
+      lastLeaveByClientIdRoom[clientId] = lastLeaveByClientIdRoom[clientId] || {};
+      lastLeaveByClientIdRoom[clientId][room] = Date.now();
       delete socketClientIds[socket.id];
     }
 
-    delete users[socket.id];
-    typingUsers.delete(socket.id);
-    delete lastActivityTimes[socket.id];
+    delete st.users[socket.id];
+    st.typingUsers.delete(socket.id);
+    delete st.lastActivityTimes[socket.id];
 
-    socket.leave(ROOM_NAME);
+    socket.leave(room);
+    emitSystem(room, `「${leftName}」さんが退室しました。`);
 
-    emitSystem(`「${leftName}」さんが退室しました。`);
+    broadcastUserList(room);
+    broadcastTypingUsers(room);
 
-    broadcastUserList();
-    broadcastTypingUsers();
-
-    if (Object.keys(users).length === 0) {
-      chatLog.length = 0;
-      typingUsers.clear();
-      console.log("All users left. chatLog cleared.");
+    if (Object.keys(st.users).length === 0) {
+      st.chatLog.length = 0;
+      st.typingUsers.clear();
+      console.log(`[${room}] All users left. chatLog cleared.`);
     }
   });
 
   // 切断
   socket.on("disconnect", () => {
-    const user = users[socket.id];
+    const room = socket.data.roomSlug;
+    if (!room || !isRoomAllowed(room)) {
+      console.log("disconnected:", socket.id);
+      return;
+    }
+
+    const st = getRoomState(room);
+    const user = st.users[socket.id];
 
     const clientId = socketClientIds[socket.id];
     if (clientId) {
-      lastLeaveByClientId[clientId] = Date.now();
+      lastLeaveByClientIdRoom[clientId] = lastLeaveByClientIdRoom[clientId] || {};
+      lastLeaveByClientIdRoom[clientId][room] = Date.now();
       delete socketClientIds[socket.id];
     }
 
     if (user) {
-      delete users[socket.id];
-      typingUsers.delete(socket.id);
-      delete lastActivityTimes[socket.id];
+      delete st.users[socket.id];
+      st.typingUsers.delete(socket.id);
+      delete st.lastActivityTimes[socket.id];
 
-      broadcastUserList();
-      broadcastTypingUsers();
+      broadcastUserList(room);
+      broadcastTypingUsers(room);
 
-      if (Object.keys(users).length === 0) {
-        chatLog.length = 0;
-        typingUsers.clear();
-        console.log("All users left. chatLog cleared.");
+      if (Object.keys(st.users).length === 0) {
+        st.chatLog.length = 0;
+        st.typingUsers.clear();
+        console.log(`[${room}] All users left. chatLog cleared.`);
       }
     }
 
-    console.log("disconnected:", socket.id);
+    console.log("disconnected:", socket.id, "room:", room);
   });
 });
 
 http.listen(3000, () => {
   console.log("Server running at http://localhost:3000");
+  console.log("Allowed rooms:", Array.from(ALLOWED_ROOMS).join(", "));
 });

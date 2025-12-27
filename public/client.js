@@ -1,5 +1,5 @@
 /* =========================
-   client.js
+   client.js（/r/:slug 複数部屋対応・差し替え版）
    - Socket.ioが生きてる時はリアルタイム
    - 切れても /api/poll で必ず追いつく（ルブル寄り）
    - タブ復帰で強制同期
@@ -11,6 +11,17 @@ if (window.__LVCHAT_CLIENT_LOADED__) {
 } else {
   window.__LVCHAT_CLIENT_LOADED__ = true;
 }
+
+// =========================
+// ★ 部屋スラッグ（URLから取得）
+// 推奨URL: /r/main , /r/sub , /r/xxx ...
+// =========================
+function getRoomSlugFromUrl() {
+  const m = location.pathname.match(/^\/r\/([^\/]+)/);
+  if (m && m[1]) return decodeURIComponent(m[1]).trim();
+  return "main";
+}
+const roomSlug = getRoomSlugFromUrl();
 
 // ★ ブラウザごとのクライアントIDを発行・保存
 let clientId = localStorage.getItem("chatClientId");
@@ -82,7 +93,11 @@ const joinRow = document.getElementById("joinRow");
 const afterJoinControls = document.querySelector(".after-join-controls");
 const inputRow = document.querySelector(".input-row");
 const infoBeforeJoin = document.getElementById("chatInfoBeforeJoin");
-const preLoginNotice = document.getElementById("preLoginNotice");
+
+// ✅ ここ重要：使い方と注意の2ブロックを別IDで扱う
+const preLoginNotice = document.getElementById("preLoginNotice");   // 注意
+const preLoginHowto  = document.getElementById("preLoginHowto");    // 使い方（HTML側でid変更してね）
+
 const templateButtons = document.querySelectorAll(".template-btn");
 
 const roll1d6Btn = document.getElementById("roll1d6Btn");
@@ -105,6 +120,8 @@ const mobileUserOverlay = document.getElementById("mobileUserOverlay");
 const mobileUserClose = document.getElementById("mobileUserClose");
 const mobileUserList = document.getElementById("mobileUserList");
 
+const roomTitle = document.getElementById("roomTitle");
+
 // 吹き出し色のラジオボタン
 const colorInputs = document.querySelectorAll('input[name="bubbleColor"]');
 
@@ -112,6 +129,13 @@ const colorInputs = document.querySelectorAll('input[name="bubbleColor"]');
 function getSelectedGender() {
   const el = document.querySelector('input[name="gender"]:checked');
   return el ? el.value : "";
+}
+
+// ★ 部屋名表示（任意だけど誤入室防止に便利）
+if (roomTitle) {
+  roomTitle.textContent = (roomSlug === "main")
+    ? "大人の遊び場（メイン）"
+    : `大人の遊び場（${roomSlug}）`;
 }
 
 /* 状態 ------------------------------ */
@@ -134,9 +158,9 @@ let pendingColor = null;
 
 /* =========================
    ✅ ルブル寄り：差分同期用
-   - lastSeenId を localStorage に保存（リロード耐性UP）
+   - lastSeenId を localStorage に保存（部屋別キー）
 ========================= */
-const LS_LAST_SEEN_ID_KEY = "lvchat_lastSeenId";
+const LS_LAST_SEEN_ID_KEY = `lvchat_lastSeenId:${roomSlug}`;
 
 let lastSeenId = Number(localStorage.getItem(LS_LAST_SEEN_ID_KEY) || 0);
 if (!Number.isFinite(lastSeenId) || lastSeenId < 0) lastSeenId = 0;
@@ -144,7 +168,7 @@ if (!Number.isFinite(lastSeenId) || lastSeenId < 0) lastSeenId = 0;
 const seenIds = new Set();    // 重複表示防止
 let pollRunning = false;
 let pollAbort = null;         // AbortController
-let preferPolling = false;    // socketが怪しい時にpoll優先
+let preferPolling = false;    // socketが怪しい時にpoll優先（現状はフラグのみ）
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -159,7 +183,7 @@ function rememberSeen(id) {
 
   // Setが増えすぎないように（最大300くらい）
   if (seenIds.size > 300) {
-    const arr = Array.from(seenIds).sort((a,b)=>a-b);
+    const arr = Array.from(seenIds).sort((a, b) => a - b);
     const keep = arr.slice(-200);
     seenIds.clear();
     for (const x of keep) seenIds.add(x);
@@ -261,7 +285,7 @@ function renderLogItem(item, fromSocket = false) {
 
 /* ログ同期（初回/復帰用） ------------------------------ */
 async function syncFullLog() {
-  const data = await fetchJson("/api/log");
+  const data = await fetchJson(`/api/log?room=${encodeURIComponent(roomSlug)}`);
   const messages = Array.isArray(data.messages) ? data.messages : [];
 
   // UIが入室前ならDOM更新しない（入室後に見せる）
@@ -293,7 +317,7 @@ async function startPollLoop() {
         continue;
       }
 
-      const url = `/api/poll?since=${lastSeenId}`;
+      const url = `/api/poll?room=${encodeURIComponent(roomSlug)}&since=${lastSeenId}`;
       const data = await fetchJson(url, { signal: pollAbort.signal });
 
       const messages = Array.isArray(data.messages) ? data.messages : [];
@@ -432,7 +456,7 @@ socket.on("connect", async () => {
     const sendColor = lastKnownColor || currentColor || null;
     const sendGender = lastKnownGender || getSelectedGender() || "";
 
-    socket.emit("join", { name: sendName, color: sendColor, clientId, gender: sendGender });
+    socket.emit("join", { roomSlug, name: sendName, color: sendColor, clientId, gender: sendGender });
   }
 
   preferPolling = false;
@@ -561,6 +585,8 @@ socket.on("force-leave", () => {
 
   if (infoBeforeJoin) infoBeforeJoin.style.display = "block";
   if (preLoginNotice) preLoginNotice.style.display = "block";
+  if (preLoginHowto)  preLoginHowto.style.display = "block";
+
   chatLog.style.display = "none";
   chatLog.innerHTML = "";
 
@@ -594,7 +620,7 @@ joinBtn.addEventListener("click", async () => {
   currentColor = checked ? checked.value : currentColor;
   const color = currentColor;
 
-  socket.emit("join", { name, color, clientId, gender });
+  socket.emit("join", { roomSlug, name, color, clientId, gender });
 
   shouldAutoJoin = true;
   if (name) lastKnownName = name;
@@ -628,6 +654,8 @@ joinBtn.addEventListener("click", async () => {
 
   if (infoBeforeJoin) infoBeforeJoin.style.display = "none";
   if (preLoginNotice) preLoginNotice.style.display = "none";
+  if (preLoginHowto)  preLoginHowto.style.display = "none";
+
   chatLog.style.display = "block";
 
   if (!name) nameInput.placeholder = "名前はあとから変更できます";
@@ -688,6 +716,8 @@ leaveBtn.addEventListener("click", () => {
 
   if (infoBeforeJoin) infoBeforeJoin.style.display = "block";
   if (preLoginNotice) preLoginNotice.style.display = "block";
+  if (preLoginHowto)  preLoginHowto.style.display = "block";
+
   chatLog.style.display = "none";
 
   chatLog.innerHTML = "";
@@ -786,7 +816,6 @@ if (topicRouletteBtn) {
 }
 
 /* ====== ルブル寄りの「復帰強化」 ====== */
-// タブ復帰で強制同期（iOS対策）
 async function forceResync(reason = "") {
   if (joined) {
     try { await syncFullLog(); } catch {}
@@ -803,7 +832,7 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-// ✅ iOSの bfcache 復帰で止まる対策（これが重要）
+// ✅ iOSの bfcache 復帰で止まる対策（重要）
 window.addEventListener("pageshow", (e) => {
   if (e.persisted) {
     forceResync("pageshow(bfcache)");
