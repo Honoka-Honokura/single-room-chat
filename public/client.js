@@ -1,7 +1,7 @@
 /* =========================
    client.js  (multi-room)
    - /r/:slug をURLから取得
-   - join / log / poll を roomSlug 付きで扱う
+   - join / log / poll を roomSlug 付きで扱う（join以外は不要）
    - lastSeenId / seenIds を部屋ごとに分離
 ========================= */
 
@@ -26,13 +26,6 @@ function getRoomSlugFromPath() {
   }
 }
 const roomSlug = getRoomSlugFromPath();
-
-// タイトル表示（任意：部屋名をタイトルに反映したい場合）
-const roomTitleEl = document.getElementById("roomTitle");
-if (roomTitleEl) {
-  // 既存のタイトルに部屋名を追記（好みで変更OK）
-  // roomTitleEl.textContent = `大人の遊び場（${roomSlug}）`;
-}
 
 // =========================
 // ★ ブラウザごとのクライアントID
@@ -81,7 +74,6 @@ function darkenColor(hex, amount = 0.35) {
 const socket = io({
   transports: ["websocket", "polling"],
   timeout: 20000,
-
   reconnection: true,
   reconnectionAttempts: Infinity,
   reconnectionDelay: 800,
@@ -276,7 +268,6 @@ function renderLogItem(item, fromSocket = false) {
 
 /* ログ同期（初回/復帰用） ------------------------------ */
 async function syncFullLog() {
-  // ★ room指定でログ取得（混ざり防止）
   const data = await fetchJson(`/api/log?room=${encodeURIComponent(roomSlug)}`);
   const messages = Array.isArray(data.messages) ? data.messages : [];
 
@@ -350,7 +341,9 @@ function applyColorChange() {
   currentColor = newColor;
   lastKnownColor = newColor;
 
-  socket.emit("change-color", { roomSlug, color: newColor });
+  // ✅ 入室後は roomSlug 不要
+  socket.emit("change-color", newColor);
+
   closeColorChangeUI();
 }
 function cancelColorChange() {
@@ -362,7 +355,9 @@ function cancelColorChange() {
 function setTyping(flag) {
   if (isTyping === flag) return;
   isTyping = flag;
-  socket.emit("typing", { roomSlug, isTyping });
+
+  // ✅ booleanだけ送る
+  socket.emit("typing", flag);
 }
 
 function closeMobileMenu() {
@@ -466,17 +461,6 @@ socket.on("room-full", () => {
 /* ====== Socket.io：受信 ====== */
 socket.on("chat-message", (payload) => {
   renderLogItem(payload, true);
-});
-
-socket.on("topic-result", (payload) => {
-  renderLogItem({
-    id: payload.id,
-    type: "topic",
-    time: payload.time,
-    name: payload.drawnBy,
-    topic: payload.topic,
-    color: null
-  }, true);
 });
 
 socket.on("system-message", (payload) => {
@@ -607,6 +591,7 @@ joinBtn.addEventListener("click", async () => {
   currentColor = checked ? checked.value : currentColor;
   const color = currentColor;
 
+  // ✅ joinだけ roomSlug を送る
   socket.emit("join", { roomSlug, name, color, clientId, gender });
 
   shouldAutoJoin = true;
@@ -660,7 +645,9 @@ renameBtn.addEventListener("click", () => {
   const trimmed = newName.trim();
   if (!trimmed || trimmed === current) return;
 
-  socket.emit("change-name", { roomSlug, name: trimmed });
+  // ✅ 文字列だけ送る
+  socket.emit("change-name", trimmed);
+
   nameInput.value = trimmed;
   lastKnownName = trimmed;
 });
@@ -668,7 +655,8 @@ renameBtn.addEventListener("click", () => {
 leaveBtn.addEventListener("click", () => {
   if (!joined) return;
 
-  socket.emit("leave", { roomSlug });
+  // ✅ 引数なし
+  socket.emit("leave");
 
   inputRow.style.display = "none";
 
@@ -693,7 +681,7 @@ leaveBtn.addEventListener("click", () => {
   sendBtn.disabled = true;
 
   if (roll1d6Btn) roll1d6Btn.disabled = true;
-  if (roll2d6Btn) roll1d6Btn.disabled = true;
+  if (roll2d6Btn) roll2d6Btn.disabled = true; // ✅ バグ修正
   if (topicRouletteBtn) topicRouletteBtn.disabled = true;
 
   document.querySelector(".template-row").style.display = "none";
@@ -749,7 +737,10 @@ openColorChangeBtn.addEventListener("click", () => {
 sendBtn.addEventListener("click", () => {
   const text = msgInput.value.trim();
   if (!text) return;
-  socket.emit("send-message", { roomSlug, text });
+
+  // ✅ roomSlug不要
+  socket.emit("send-message", { text });
+
   msgInput.value = "";
   setTyping(false);
 });
@@ -771,7 +762,7 @@ msgInput.addEventListener("keyup", () => {
 templateButtons.forEach(btn => {
   btn.addEventListener("click", () => {
     const text = btn.dataset.text;
-    socket.emit("send-message", { roomSlug, text });
+    socket.emit("send-message", { text }); // ✅ roomSlug不要
   });
 });
 
@@ -779,13 +770,13 @@ templateButtons.forEach(btn => {
 if (roll1d6Btn) {
   roll1d6Btn.addEventListener("click", () => {
     if (!joined) return;
-    socket.emit("roll-1d6", { roomSlug });
+    socket.emit("roll-1d6"); // ✅ 引数なし
   });
 }
 if (roll2d6Btn) {
   roll2d6Btn.addEventListener("click", () => {
     if (!joined) return;
-    socket.emit("roll-dice", { roomSlug });
+    socket.emit("roll-dice"); // ✅ 引数なし
   });
 }
 
@@ -793,7 +784,7 @@ if (roll2d6Btn) {
 if (topicRouletteBtn) {
   topicRouletteBtn.addEventListener("click", () => {
     if (!joined) return;
-    socket.emit("draw-topic", { roomSlug });
+    socket.emit("draw-topic"); // ✅ 引数なし
   });
 }
 
@@ -818,4 +809,3 @@ window.addEventListener("online", () => {
 
 // pollは常時起動（入室してない時は待つ）
 startPollLoop();
-
