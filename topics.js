@@ -1,4 +1,4 @@
-// topics.js（部屋別 永続化 + 重み付きお題ガチャ）
+// topics.js（複数ルーム対応 / 永続化 / 重み付きガチャ / 自動移行）
 const fs = require("fs");
 const path = require("path");
 
@@ -38,51 +38,25 @@ function clampInt(n, min, max, def) {
 function sanitizeText(text) {
   const t = String(text ?? "").trim();
   if (!t) throw new Error("text is required");
-  // ここはお好みで上限調整OK
   if (t.length > 200) throw new Error("text is too long (max 200)");
   return t;
 }
 
-// ---------- storage shape ----------
-// topics.json はこうなる：
-// {
-//   "main": [ { "id": 1, "text": "お題", "weight": 1 }, ... ],
-//   "night": [ ... ]
-// }
-function loadAll() {
-  const data = readJsonSafe(TOPICS_FILE, {});
-  // 旧形式（配列）からの自動移行
-  // [ "aaa", "bbb" ] だったら main に入れる
-  if (Array.isArray(data)) {
-    const migrated = {
-      main: data
-        .map((t, i) => ({
-          id: i + 1,
-          text: String(t ?? "").trim(),
-          weight: 1,
-        }))
-        .filter((x) => x.text),
-    };
-    writeJsonSafe(TOPICS_FILE, migrated);
-    return migrated;
-  }
-  // 変な形でも最低限オブジェクトに
-  if (!data || typeof data !== "object") return {};
-  return data;
+function sanitizeRooms(rooms, fallbackRoom = "main") {
+  // rooms が未指定 or 変な形なら fallbackRoom だけにする
+  let arr = [];
+  if (Array.isArray(rooms)) arr = rooms;
+  else if (typeof rooms === "string" && rooms.trim()) arr = rooms.split(","); // 念のため
+  arr = arr.map((r) => normalizeRoomSlug(r)).filter(Boolean);
+
+  // 空なら fallback
+  if (arr.length === 0) arr = [normalizeRoomSlug(fallbackRoom)];
+
+  // 重複除去
+  return Array.from(new Set(arr));
 }
 
-function saveAll(all) {
-  writeJsonSafe(TOPICS_FILE, all);
-}
-
-function ensureRoom(all, room) {
-  const r = normalizeRoomSlug(room);
-  if (!all[r]) all[r] = [];
-  if (!Array.isArray(all[r])) all[r] = [];
-  return r;
-}
-
-function nextId(list) {
+function nextGlobalId(list) {
   let max = 0;
   for (const t of list) {
     const id = Number(t?.id);
@@ -91,24 +65,119 @@ function nextId(list) {
   return max + 1;
 }
 
+// ---------- storage ----------
+// 新形式 topics.json：
+// [
+//   { "id": 1, "text": "お題", "weight": 2, "rooms": ["main","night"] },
+//   ...
+// ]
+function loadAll() {
+  const data = readJsonSafe(TOPICS_FILE, []);
+
+  // すでに新形式（配列 of object）なら整形して返す
+  if (Array.isArray(data)) {
+    // 旧形式：[ "aaa", "bbb" ] → main に移行
+    if (data.every((x) => typeof x === "string")) {
+      const migrated = data
+        .map((t, i) => ({
+          id: i + 1,
+          text: String(t ?? "").trim(),
+          weight: 1,
+          rooms: ["main"],
+        }))
+        .filter((x) => x.text);
+      writeJsonSafe(TOPICS_FILE, migrated);
+      return migrated;
+    }
+
+    // 配列だけど中身がバラバラでも一応整える
+    const normalized = data
+      .map((t) => {
+        if (!t || typeof t !== "object") return null;
+        const id = Number(t.id);
+        if (!Number.isFinite(id)) return null;
+        const text = String(t.text ?? "").trim();
+        if (!text) return null;
+        const weight = clampInt(t.weight ?? 1, 1, 100, 1);
+        const rooms = sanitizeRooms(t.rooms, "main");
+        return { id, text, weight, rooms };
+      })
+      .filter(Boolean);
+
+    // もし正規化で変化したら保存しておく
+    if (normalized.length !== data.length) {
+      writeJsonSafe(TOPICS_FILE, normalized);
+    }
+    return normalized;
+  }
+
+  // 旧形式（部屋ごとのオブジェクト）から移行
+  // {
+  //   "main": [ {id,text,weight}, ... ],
+  //   "night": [ ... ]
+  // }
+  if (data && typeof data === "object") {
+    const migrated = [];
+    let gid = 1;
+
+    for (const [roomKey, list] of Object.entries(data)) {
+      const room = normalizeRoomSlug(roomKey);
+      if (!Array.isArray(list)) continue;
+
+      for (const item of list) {
+        if (!item) continue;
+        const text = String(item.text ?? "").trim();
+        if (!text) continue;
+        const weight = clampInt(item.weight ?? 1, 1, 100, 1);
+
+        migrated.push({
+          id: gid++,
+          text,
+          weight,
+          rooms: [room],
+        });
+      }
+    }
+
+    writeJsonSafe(TOPICS_FILE, migrated);
+    return migrated;
+  }
+
+  return [];
+}
+
+function saveAll(all) {
+  writeJsonSafe(TOPICS_FILE, all);
+}
+
+function findById(all, id) {
+  const tid = Number(id);
+  if (!Number.isInteger(tid)) throw new Error("invalid id");
+  const idx = all.findIndex((t) => Number(t.id) === tid);
+  if (idx === -1) throw new Error("topic not found");
+  return { tid, idx, topic: all[idx] };
+}
+
 // ---------- public API ----------
 function getTopics(room) {
   const all = loadAll();
-  const r = ensureRoom(all, room);
-  // 返すだけ。必要ならソート
-  return all[r].slice().sort((a, b) => (a.id || 0) - (b.id || 0));
+  const r = normalizeRoomSlug(room);
+  return all
+    .filter((t) => Array.isArray(t.rooms) && t.rooms.includes(r))
+    .slice()
+    .sort((a, b) => (a.id || 0) - (b.id || 0));
 }
 
-function addTopic(room, text, weight) {
+function addTopic(room, text, weight, rooms) {
   const all = loadAll();
-  const r = ensureRoom(all, room);
-
+  const baseRoom = normalizeRoomSlug(room);
   const t = sanitizeText(text);
   const w = clampInt(weight ?? 1, 1, 100, 1);
 
-  const list = all[r];
-  const item = { id: nextId(list), text: t, weight: w };
-  list.push(item);
+  const rs = sanitizeRooms(rooms, baseRoom);
+
+  const item = { id: nextGlobalId(all), text: t, weight: w, rooms: rs };
+  all.push(item);
 
   saveAll(all);
   return item;
@@ -116,50 +185,61 @@ function addTopic(room, text, weight) {
 
 function updateTopic(room, id, patch = {}) {
   const all = loadAll();
-  const r = ensureRoom(all, room);
+  const r = normalizeRoomSlug(room);
 
-  const tid = Number(id);
-  if (!Number.isInteger(tid)) throw new Error("invalid id");
+  const { idx, topic } = findById(all, id);
 
-  const list = all[r];
-  const idx = list.findIndex((t) => Number(t.id) === tid);
-  if (idx === -1) throw new Error("topic not found");
+  // 安全：このroomに所属してるお題だけ編集可（不要なら外してOK）
+  if (!Array.isArray(topic.rooms) || !topic.rooms.includes(r)) {
+    throw new Error("topic is not in this room");
+  }
 
   if (patch.text !== undefined) {
-    list[idx].text = sanitizeText(patch.text);
+    topic.text = sanitizeText(patch.text);
   }
   if (patch.weight !== undefined) {
-    list[idx].weight = clampInt(patch.weight, 1, 100, 1);
+    topic.weight = clampInt(patch.weight, 1, 100, 1);
+  }
+  if (patch.rooms !== undefined) {
+    topic.rooms = sanitizeRooms(patch.rooms, r);
   }
 
+  all[idx] = topic;
   saveAll(all);
-  return list[idx];
+  return topic;
 }
 
 function deleteTopic(room, id) {
   const all = loadAll();
-  const r = ensureRoom(all, room);
+  const r = normalizeRoomSlug(room);
 
-  const tid = Number(id);
-  if (!Number.isInteger(tid)) throw new Error("invalid id");
+  const { idx, topic } = findById(all, id);
 
-  const list = all[r];
-  const idx = list.findIndex((t) => Number(t.id) === tid);
-  if (idx === -1) throw new Error("topic not found");
+  // 安全：このroomに所属してるお題だけ削除可
+  if (!Array.isArray(topic.rooms) || !topic.rooms.includes(r)) {
+    throw new Error("topic is not in this room");
+  }
 
-  const removed = list.splice(idx, 1)[0];
+  const removed = all.splice(idx, 1)[0];
   saveAll(all);
   return removed;
 }
 
 function drawTopic(room) {
   const all = loadAll();
-  const r = ensureRoom(all, room);
-  const list = all[r].filter((t) => t && String(t.text || "").trim());
+  const r = normalizeRoomSlug(room);
+
+  const list = all.filter(
+    (t) =>
+      t &&
+      String(t.text || "").trim() &&
+      Array.isArray(t.rooms) &&
+      t.rooms.includes(r)
+  );
 
   if (list.length === 0) return null;
 
-  // 重み付き抽選（weight が大きいほど出やすい）
+  // 重み付き抽選
   let total = 0;
   const weights = list.map((t) => {
     const w = clampInt(t.weight ?? 1, 1, 100, 1);
