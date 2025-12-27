@@ -738,7 +738,7 @@ app.get("/api/poll", (req, res) => {
 
   const waiter = {
     sinceId,
-    res,
+    res,msg
     timer: setTimeout(() => {
       st.pollWaiters.delete(waiter);
       res.json({ ok: true, messages: [], serverTime: Date.now() });
@@ -900,9 +900,14 @@ io.on("connection", (socket) => {
       const user = st.users[socket.id];
       if (!user) return;
 
-      const text = (msg || "").toString().trim();
+      // ✅ 文字列でも {text} でもOKにする
+      const text = (typeof msg === "object" && msg !== null)
+        ? String(msg.text || "").trim()
+        : String(msg || "").trim();
+
       if (!text) return;
 
+      // 以降は今のままでOK（moderation/URL/連投制限など）
       const maxLen = Number(moderation?.maxMsgLen ?? 300);
       const maxUrls = Number(moderation?.maxUrlsPerMsg ?? 3);
       const blockPII = !!(moderation?.blockPII ?? true);
@@ -948,8 +953,8 @@ io.on("connection", (socket) => {
       }
 
       touchActivity(room, socket.id);
-
       emitLog("chat", { name: user.name, text, color: user.color || null }, { fromId: socket.id, room });
+
     } catch (err) {
       console.error("send-message error:", err);
       try {
@@ -957,6 +962,7 @@ io.on("connection", (socket) => {
       } catch (_) {}
     }
   });
+
 
   // 1D6
   socket.on("roll-1d6", () => {
