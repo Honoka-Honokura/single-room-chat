@@ -122,12 +122,15 @@
   <h1>お題ガチャ 管理画面 <span id="roomPill" class="room-pill">room: main</span></h1>
 
   <div class="card">
+    <h2 style="font-size:16px;margin:0 0 8px;">対象ルーム</h2>
+    <label for="roomSelect">ルーム（自動判定・手動変更可）</label>
+    <select id="roomSelect"></select>
+
     <label for="adminPassword">管理パスワード</label>
-    <input type="password" id="adminPassword" />
-    <button id="loadBtn" class="primary">お題を読み込む</button>
+    <input type="password" id="adminPassword" placeholder="server.js の ADMIN_PASSWORD と同じ値" />
+    <button id="loadBtn" class="primary">現在のお題を読み込む</button>
     <div id="statusText" class="status"></div>
   </div>
-
 
   <div class="card">
     <h2 style="font-size:16px;margin:0 0 8px;">お題の追加</h2>
@@ -195,6 +198,9 @@
     const topicsBody         = document.getElementById("topicsBody");
     const newTopicText       = document.getElementById("newTopicText");
     const newTopicWeight     = document.getElementById("newTopicWeight");
+
+    const roomSelect         = document.getElementById("roomSelect");
+    const roomPill           = document.getElementById("roomPill");
 
     const addRoomCheckboxes  = document.getElementById("addRoomCheckboxes");
     const editRoomCheckboxes = document.getElementById("editRoomCheckboxes");
