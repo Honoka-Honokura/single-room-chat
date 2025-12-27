@@ -1,11 +1,11 @@
 /* =========================
-   client.js（/r/:slug 複数部屋対応・差し替え版）
-   - Socket.ioが生きてる時はリアルタイム
-   - 切れても /api/poll で必ず追いつく（ルブル寄り）
-   - タブ復帰で強制同期
+   client.js  (multi-room)
+   - /r/:slug をURLから取得
+   - join / log / poll を roomSlug 付きで扱う
+   - lastSeenId / seenIds を部屋ごとに分離
 ========================= */
 
-// ★ 二重起動ガード（万一 client.js が2回動いても事故らない）
+// ★ 二重起動ガード
 if (window.__LVCHAT_CLIENT_LOADED__) {
   console.warn("client.js already initialized. Skip.");
 } else {
@@ -13,17 +13,30 @@ if (window.__LVCHAT_CLIENT_LOADED__) {
 }
 
 // =========================
-// ★ 部屋スラッグ（URLから取得）
-// 推奨URL: /r/main , /r/sub , /r/xxx ...
+// ★ 現在の部屋slugをURLから取得
+//   /r/main なら "main"
 // =========================
-function getRoomSlugFromUrl() {
-  const m = location.pathname.match(/^\/r\/([^\/]+)/);
-  if (m && m[1]) return decodeURIComponent(m[1]).trim();
-  return "main";
+function getRoomSlugFromPath() {
+  const m = location.pathname.match(/^\/r\/([^\/?#]+)/);
+  if (!m) return "main";
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
 }
-const roomSlug = getRoomSlugFromUrl();
+const roomSlug = getRoomSlugFromPath();
 
-// ★ ブラウザごとのクライアントIDを発行・保存
+// タイトル表示（任意：部屋名をタイトルに反映したい場合）
+const roomTitleEl = document.getElementById("roomTitle");
+if (roomTitleEl) {
+  // 既存のタイトルに部屋名を追記（好みで変更OK）
+  // roomTitleEl.textContent = `大人の遊び場（${roomSlug}）`;
+}
+
+// =========================
+// ★ ブラウザごとのクライアントID
+// =========================
 let clientId = localStorage.getItem("chatClientId");
 if (!clientId) {
   clientId = "c-" + Math.random().toString(36).slice(2);
@@ -39,7 +52,6 @@ function hashStringToNumber(str) {
   }
   return Math.abs(hash);
 }
-
 function getColorForName(name) {
   const colors = [
     "#FFEBEE", "#FFF3E0", "#FFFDE7", "#E8F5E9",
@@ -50,7 +62,6 @@ function getColorForName(name) {
   const index = num % colors.length;
   return colors[index];
 }
-
 function darkenColor(hex, amount = 0.35) {
   const num = parseInt(hex.replace("#", ""), 16);
   let r = (num >> 16) & 255;
@@ -93,11 +104,7 @@ const joinRow = document.getElementById("joinRow");
 const afterJoinControls = document.querySelector(".after-join-controls");
 const inputRow = document.querySelector(".input-row");
 const infoBeforeJoin = document.getElementById("chatInfoBeforeJoin");
-
-// ✅ ここ重要：使い方と注意の2ブロックを別IDで扱う
-const preLoginNotice = document.getElementById("preLoginNotice");   // 注意
-const preLoginHowto  = document.getElementById("preLoginHowto");    // 使い方（HTML側でid変更してね）
-
+const preLoginNotice = document.getElementById("preLoginNotice");
 const templateButtons = document.querySelectorAll(".template-btn");
 
 const roll1d6Btn = document.getElementById("roll1d6Btn");
@@ -120,8 +127,6 @@ const mobileUserOverlay = document.getElementById("mobileUserOverlay");
 const mobileUserClose = document.getElementById("mobileUserClose");
 const mobileUserList = document.getElementById("mobileUserList");
 
-const roomTitle = document.getElementById("roomTitle");
-
 // 吹き出し色のラジオボタン
 const colorInputs = document.querySelectorAll('input[name="bubbleColor"]');
 
@@ -129,13 +134,6 @@ const colorInputs = document.querySelectorAll('input[name="bubbleColor"]');
 function getSelectedGender() {
   const el = document.querySelector('input[name="gender"]:checked');
   return el ? el.value : "";
-}
-
-// ★ 部屋名表示（任意だけど誤入室防止に便利）
-if (roomTitle) {
-  roomTitle.textContent = (roomSlug === "main")
-    ? "大人の遊び場（メイン）"
-    : `大人の遊び場（${roomSlug}）`;
 }
 
 /* 状態 ------------------------------ */
@@ -157,18 +155,16 @@ let currentColor = (() => {
 let pendingColor = null;
 
 /* =========================
-   ✅ ルブル寄り：差分同期用
-   - lastSeenId を localStorage に保存（部屋別キー）
+   ✅ 部屋ごとに lastSeenId を分離
 ========================= */
 const LS_LAST_SEEN_ID_KEY = `lvchat_lastSeenId:${roomSlug}`;
 
 let lastSeenId = Number(localStorage.getItem(LS_LAST_SEEN_ID_KEY) || 0);
 if (!Number.isFinite(lastSeenId) || lastSeenId < 0) lastSeenId = 0;
 
-const seenIds = new Set();    // 重複表示防止
+const seenIds = new Set();
 let pollRunning = false;
-let pollAbort = null;         // AbortController
-let preferPolling = false;    // socketが怪しい時にpoll優先（現状はフラグのみ）
+let pollAbort = null;
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -181,9 +177,8 @@ function rememberSeen(id) {
     localStorage.setItem(LS_LAST_SEEN_ID_KEY, String(lastSeenId));
   }
 
-  // Setが増えすぎないように（最大300くらい）
   if (seenIds.size > 300) {
-    const arr = Array.from(seenIds).sort((a, b) => a - b);
+    const arr = Array.from(seenIds).sort((a,b)=>a-b);
     const keep = arr.slice(-200);
     seenIds.clear();
     for (const x of keep) seenIds.add(x);
@@ -199,14 +194,12 @@ async function fetchJson(url, opts) {
 function clearChatDom() {
   chatLog.innerHTML = "";
 }
-
 function trimChatDom() {
   const max = 50;
   while (chatLog.children.length > max) {
     chatLog.removeChild(chatLog.firstElementChild);
   }
 }
-
 function scrollBottom() {
   chatLog.scrollTop = chatLog.scrollHeight;
 }
@@ -232,7 +225,6 @@ function renderTopic(item) {
 
   const body = document.createElement("div");
   body.className = "topic-body";
-  // ★ innerHTML直差しをやめる（改行はCSS pre-wrapで出る）
   body.textContent = item.topic;
 
   wrapper.appendChild(header);
@@ -264,7 +256,6 @@ function renderChatLike(item, isSelf = false) {
 }
 
 function renderLogItem(item, fromSocket = false) {
-  // ★ 重複防止（idがあるものだけ）
   if (item.id) {
     if (seenIds.has(item.id)) return;
     rememberSeen(item.id);
@@ -285,10 +276,10 @@ function renderLogItem(item, fromSocket = false) {
 
 /* ログ同期（初回/復帰用） ------------------------------ */
 async function syncFullLog() {
+  // ★ room指定でログ取得（混ざり防止）
   const data = await fetchJson(`/api/log?room=${encodeURIComponent(roomSlug)}`);
   const messages = Array.isArray(data.messages) ? data.messages : [];
 
-  // UIが入室前ならDOM更新しない（入室後に見せる）
   if (!joined) {
     for (const m of messages) {
       if (m.id) rememberSeen(m.id);
@@ -349,7 +340,6 @@ function closeColorChangeUI() {
   if (joined) colorRow.style.display = "none";
   colorChangeWrapper.innerHTML = "";
 }
-
 function applyColorChange() {
   if (!joined) return;
 
@@ -360,10 +350,9 @@ function applyColorChange() {
   currentColor = newColor;
   lastKnownColor = newColor;
 
-  socket.emit("change-color", newColor);
+  socket.emit("change-color", { roomSlug, color: newColor });
   closeColorChangeUI();
 }
-
 function cancelColorChange() {
   pendingColor = null;
   closeColorChangeUI();
@@ -373,7 +362,7 @@ function cancelColorChange() {
 function setTyping(flag) {
   if (isTyping === flag) return;
   isTyping = flag;
-  socket.emit("typing", isTyping);
+  socket.emit("typing", { roomSlug, isTyping });
 }
 
 function closeMobileMenu() {
@@ -456,15 +445,18 @@ socket.on("connect", async () => {
     const sendColor = lastKnownColor || currentColor || null;
     const sendGender = lastKnownGender || getSelectedGender() || "";
 
-    socket.emit("join", { roomSlug, name: sendName, color: sendColor, clientId, gender: sendGender });
+    socket.emit("join", {
+      roomSlug,
+      name: sendName,
+      color: sendColor,
+      clientId,
+      gender: sendGender
+    });
   }
-
-  preferPolling = false;
 });
 
 socket.on("disconnect", () => {
   statusText.textContent = joined ? "切断中…（復帰中）" : "未入室";
-  preferPolling = true;
 });
 
 socket.on("room-full", () => {
@@ -487,7 +479,6 @@ socket.on("topic-result", (payload) => {
   }, true);
 });
 
-// ✅ system-message：idがあるなら renderLogItem に通して重複排除
 socket.on("system-message", (payload) => {
   if (!joined) return;
 
@@ -502,7 +493,6 @@ socket.on("system-message", (payload) => {
     return;
   }
 
-  // id無し（本人だけ警告など）
   renderSystem({ time: payload.time, text: payload.text });
   trimChatDom();
   scrollBottom();
@@ -585,8 +575,6 @@ socket.on("force-leave", () => {
 
   if (infoBeforeJoin) infoBeforeJoin.style.display = "block";
   if (preLoginNotice) preLoginNotice.style.display = "block";
-  if (preLoginHowto)  preLoginHowto.style.display = "block";
-
   chatLog.style.display = "none";
   chatLog.innerHTML = "";
 
@@ -609,7 +597,6 @@ joinBtn.addEventListener("click", async () => {
 
   const name = nameInput.value.trim() || "";
 
-  // ★ 性別必須
   const gender = getSelectedGender();
   if (!gender) {
     alert("性別（男性/女性）を選択してください。");
@@ -654,8 +641,6 @@ joinBtn.addEventListener("click", async () => {
 
   if (infoBeforeJoin) infoBeforeJoin.style.display = "none";
   if (preLoginNotice) preLoginNotice.style.display = "none";
-  if (preLoginHowto)  preLoginHowto.style.display = "none";
-
   chatLog.style.display = "block";
 
   if (!name) nameInput.placeholder = "名前はあとから変更できます";
@@ -675,7 +660,7 @@ renameBtn.addEventListener("click", () => {
   const trimmed = newName.trim();
   if (!trimmed || trimmed === current) return;
 
-  socket.emit("change-name", trimmed);
+  socket.emit("change-name", { roomSlug, name: trimmed });
   nameInput.value = trimmed;
   lastKnownName = trimmed;
 });
@@ -683,7 +668,7 @@ renameBtn.addEventListener("click", () => {
 leaveBtn.addEventListener("click", () => {
   if (!joined) return;
 
-  socket.emit("leave");
+  socket.emit("leave", { roomSlug });
 
   inputRow.style.display = "none";
 
@@ -708,7 +693,7 @@ leaveBtn.addEventListener("click", () => {
   sendBtn.disabled = true;
 
   if (roll1d6Btn) roll1d6Btn.disabled = true;
-  if (roll2d6Btn) roll2d6Btn.disabled = true;
+  if (roll2d6Btn) roll1d6Btn.disabled = true;
   if (topicRouletteBtn) topicRouletteBtn.disabled = true;
 
   document.querySelector(".template-row").style.display = "none";
@@ -716,8 +701,6 @@ leaveBtn.addEventListener("click", () => {
 
   if (infoBeforeJoin) infoBeforeJoin.style.display = "block";
   if (preLoginNotice) preLoginNotice.style.display = "block";
-  if (preLoginHowto)  preLoginHowto.style.display = "block";
-
   chatLog.style.display = "none";
 
   chatLog.innerHTML = "";
@@ -766,7 +749,7 @@ openColorChangeBtn.addEventListener("click", () => {
 sendBtn.addEventListener("click", () => {
   const text = msgInput.value.trim();
   if (!text) return;
-  socket.emit("send-message", text);
+  socket.emit("send-message", { roomSlug, text });
   msgInput.value = "";
   setTyping(false);
 });
@@ -788,7 +771,7 @@ msgInput.addEventListener("keyup", () => {
 templateButtons.forEach(btn => {
   btn.addEventListener("click", () => {
     const text = btn.dataset.text;
-    socket.emit("send-message", text);
+    socket.emit("send-message", { roomSlug, text });
   });
 });
 
@@ -796,14 +779,13 @@ templateButtons.forEach(btn => {
 if (roll1d6Btn) {
   roll1d6Btn.addEventListener("click", () => {
     if (!joined) return;
-    socket.emit("roll-1d6");
+    socket.emit("roll-1d6", { roomSlug });
   });
 }
-
 if (roll2d6Btn) {
   roll2d6Btn.addEventListener("click", () => {
     if (!joined) return;
-    socket.emit("roll-dice");
+    socket.emit("roll-dice", { roomSlug });
   });
 }
 
@@ -811,12 +793,12 @@ if (roll2d6Btn) {
 if (topicRouletteBtn) {
   topicRouletteBtn.addEventListener("click", () => {
     if (!joined) return;
-    socket.emit("draw-topic");
+    socket.emit("draw-topic", { roomSlug });
   });
 }
 
-/* ====== ルブル寄りの「復帰強化」 ====== */
-async function forceResync(reason = "") {
+/* ====== 復帰強化 ====== */
+async function forceResync() {
   if (joined) {
     try { await syncFullLog(); } catch {}
   }
@@ -824,25 +806,16 @@ async function forceResync(reason = "") {
     try { socket.connect(); } catch {}
   }
 }
-
-// ✅ タブ復帰（iOS対策）
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
-    forceResync("visible");
-  }
+  if (document.visibilityState === "visible") forceResync();
 });
-
-// ✅ iOSの bfcache 復帰で止まる対策（重要）
 window.addEventListener("pageshow", (e) => {
-  if (e.persisted) {
-    forceResync("pageshow(bfcache)");
-  }
+  if (e.persisted) forceResync();
 });
-
-// ✅ 回線復帰で確実に同期
 window.addEventListener("online", () => {
-  forceResync("online");
+  forceResync();
 });
 
-// pollは常時起動（入室してない時は待つので負荷は小）
+// pollは常時起動（入室してない時は待つ）
 startPollLoop();
+
