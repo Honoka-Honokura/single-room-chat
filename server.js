@@ -738,12 +738,13 @@ app.get("/api/poll", (req, res) => {
 
   const waiter = {
     sinceId,
-    res,msg
+    res,
     timer: setTimeout(() => {
       st.pollWaiters.delete(waiter);
       res.json({ ok: true, messages: [], serverTime: Date.now() });
     }, POLL_TIMEOUT_MS),
   };
+
   st.pollWaiters.add(waiter);
 
   req.on("close", () => {
