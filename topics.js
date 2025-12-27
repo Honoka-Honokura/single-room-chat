@@ -1,178 +1,184 @@
-// topics.js（部屋別 永続化版）
-// topics.<room>.json を使う
-
+// topics.js（部屋別 永続化 + 重み付きお題ガチャ）
 const fs = require("fs");
 const path = require("path");
 
-function topicFilePath(room) {
-  const r = String(room || "main").trim() || "main";
-  return path.join(__dirname, `topics.${r}.json`);
+const TOPICS_FILE = path.join(__dirname, "topics.json");
+
+// ---------- utils ----------
+function normalizeRoomSlug(slug) {
+  const s = String(slug || "main").trim();
+  const safe = s.replace(/[^a-zA-Z0-9_-]/g, "");
+  return safe || "main";
 }
 
-// ルームごとにメモリ保持
-const topicsByRoom = new Map();
-
-function getDefaultTopics() {
-  return [
-    { id: 1, text: "最近いちばんエロかった出来事を、R指定にならない範囲で教えて", weight: 1 },
-    { id: 2, text: "相手に言ってみたいセリフを3つ並べて、その中で一番言ってほしいものを選んでもらう", weight: 1 },
-    { id: 3, text: "今の気分を『お酒の種類』で例えて、その理由も添えて説明して", weight: 1 },
-  ];
-}
-
-function loadTopics(room) {
-  const file = topicFilePath(room);
-
+function readJsonSafe(filePath, fallback) {
   try {
-    if (!fs.existsSync(file)) {
-      const def = getDefaultTopics();
-      topicsByRoom.set(room, def);
-      saveTopics(room);
-      return;
-    }
-
-    const json = fs.readFileSync(file, "utf8");
-    const data = JSON.parse(json);
-
-    if (!Array.isArray(data)) throw new Error("topics file is not array");
-
-    let maxId = 0;
-    const topics = data.map((raw, index) => {
-      const id = typeof raw.id === "number" && Number.isFinite(raw.id) ? raw.id : index + 1;
-      if (id > maxId) maxId = id;
-
-      const text = (raw.text || "").toString().trim();
-      const wRaw = Number(raw.weight);
-      const weight = Number.isFinite(wRaw) && wRaw > 0 ? wRaw : 1;
-
-      return { id, text, weight };
-    });
-
-    if (!topics.some((t) => t.text && t.text.length > 0)) {
-      topicsByRoom.set(room, getDefaultTopics());
-      saveTopics(room);
-      return;
-    }
-
-    topicsByRoom.set(room, topics);
-  } catch (err) {
-    console.error(`[topics] Failed to load topics for room=${room}:`, err);
-    topicsByRoom.set(room, getDefaultTopics());
-    saveTopics(room);
+    if (!fs.existsSync(filePath)) return fallback;
+    const raw = fs.readFileSync(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("topics.json read error:", e);
+    return fallback;
   }
 }
 
-function saveTopics(room) {
-  const file = topicFilePath(room);
-  const topics = topicsByRoom.get(room) || [];
-
-  try {
-    const json = JSON.stringify(topics, null, 2);
-    fs.writeFileSync(file, json, "utf8");
-  } catch (err) {
-    console.error(`[topics] Failed to save topics for room=${room}:`, err);
-  }
+function writeJsonSafe(filePath, obj) {
+  const tmp = filePath + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), "utf8");
+  fs.renameSync(tmp, filePath);
 }
 
-function ensureRoom(room) {
-  const r = String(room || "main").trim() || "main";
-  if (!topicsByRoom.has(r)) loadTopics(r);
+function clampInt(n, min, max, def) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return def;
+  const v = Math.floor(x);
+  return Math.max(min, Math.min(max, v));
+}
+
+function sanitizeText(text) {
+  const t = String(text ?? "").trim();
+  if (!t) throw new Error("text is required");
+  // ここはお好みで上限調整OK
+  if (t.length > 200) throw new Error("text is too long (max 200)");
+  return t;
+}
+
+// ---------- storage shape ----------
+// topics.json はこうなる：
+// {
+//   "main": [ { "id": 1, "text": "お題", "weight": 1 }, ... ],
+//   "night": [ ... ]
+// }
+function loadAll() {
+  const data = readJsonSafe(TOPICS_FILE, {});
+  // 旧形式（配列）からの自動移行
+  // [ "aaa", "bbb" ] だったら main に入れる
+  if (Array.isArray(data)) {
+    const migrated = {
+      main: data
+        .map((t, i) => ({
+          id: i + 1,
+          text: String(t ?? "").trim(),
+          weight: 1,
+        }))
+        .filter((x) => x.text),
+    };
+    writeJsonSafe(TOPICS_FILE, migrated);
+    return migrated;
+  }
+  // 変な形でも最低限オブジェクトに
+  if (!data || typeof data !== "object") return {};
+  return data;
+}
+
+function saveAll(all) {
+  writeJsonSafe(TOPICS_FILE, all);
+}
+
+function ensureRoom(all, room) {
+  const r = normalizeRoomSlug(room);
+  if (!all[r]) all[r] = [];
+  if (!Array.isArray(all[r])) all[r] = [];
   return r;
 }
 
-// 一覧
+function nextId(list) {
+  let max = 0;
+  for (const t of list) {
+    const id = Number(t?.id);
+    if (Number.isFinite(id) && id > max) max = id;
+  }
+  return max + 1;
+}
+
+// ---------- public API ----------
 function getTopics(room) {
-  const r = ensureRoom(room);
-  return topicsByRoom.get(r) || [];
+  const all = loadAll();
+  const r = ensureRoom(all, room);
+  // 返すだけ。必要ならソート
+  return all[r].slice().sort((a, b) => (a.id || 0) - (b.id || 0));
 }
 
-// 追加
-function addTopic(room, text, weight = 1) {
-  const r = ensureRoom(room);
+function addTopic(room, text, weight) {
+  const all = loadAll();
+  const r = ensureRoom(all, room);
 
-  const cleanText = (text || "").toString().trim();
-  if (!cleanText) throw new Error("text is required");
+  const t = sanitizeText(text);
+  const w = clampInt(weight ?? 1, 1, 100, 1);
 
-  const w = Number(weight);
-  const safeWeight = Number.isFinite(w) && w > 0 ? w : 1;
+  const list = all[r];
+  const item = { id: nextId(list), text: t, weight: w };
+  list.push(item);
 
-  const topics = topicsByRoom.get(r) || [];
-  const maxId = topics.reduce((max, t) => Math.max(max, t.id || 0), 0);
-  const id = maxId + 1;
-
-  const topic = { id, text: cleanText, weight: safeWeight };
-  topics.push(topic);
-  topicsByRoom.set(r, topics);
-  saveTopics(r);
-
-  return topic;
+  saveAll(all);
+  return item;
 }
 
-// 更新
-function updateTopic(room, id, fields) {
-  const r = ensureRoom(room);
-  const topics = topicsByRoom.get(r) || [];
+function updateTopic(room, id, patch = {}) {
+  const all = loadAll();
+  const r = ensureRoom(all, room);
 
-  const idx = topics.findIndex((t) => t.id === id);
+  const tid = Number(id);
+  if (!Number.isInteger(tid)) throw new Error("invalid id");
+
+  const list = all[r];
+  const idx = list.findIndex((t) => Number(t.id) === tid);
   if (idx === -1) throw new Error("topic not found");
 
-  const target = topics[idx];
-
-  if (fields.text !== undefined) {
-    const cleanText = (fields.text || "").toString().trim();
-    if (!cleanText) throw new Error("text is required");
-    target.text = cleanText;
+  if (patch.text !== undefined) {
+    list[idx].text = sanitizeText(patch.text);
+  }
+  if (patch.weight !== undefined) {
+    list[idx].weight = clampInt(patch.weight, 1, 100, 1);
   }
 
-  if (fields.weight !== undefined) {
-    const w = Number(fields.weight);
-    const safeWeight = Number.isFinite(w) && w > 0 ? w : 1;
-    target.weight = safeWeight;
-  }
-
-  topics[idx] = target;
-  topicsByRoom.set(r, topics);
-  saveTopics(r);
-
-  return target;
+  saveAll(all);
+  return list[idx];
 }
 
-// 削除
 function deleteTopic(room, id) {
-  const r = ensureRoom(room);
-  const topics = topicsByRoom.get(r) || [];
+  const all = loadAll();
+  const r = ensureRoom(all, room);
 
-  const idx = topics.findIndex((t) => t.id === id);
+  const tid = Number(id);
+  if (!Number.isInteger(tid)) throw new Error("invalid id");
+
+  const list = all[r];
+  const idx = list.findIndex((t) => Number(t.id) === tid);
   if (idx === -1) throw new Error("topic not found");
 
-  const removed = topics.splice(idx, 1)[0];
-  topicsByRoom.set(r, topics);
-  saveTopics(r);
-
+  const removed = list.splice(idx, 1)[0];
+  saveAll(all);
   return removed;
 }
 
-// ガチャ
 function drawTopic(room) {
-  const r = ensureRoom(room);
-  const topics = topicsByRoom.get(r) || [];
-  if (!topics.length) return null;
+  const all = loadAll();
+  const r = ensureRoom(all, room);
+  const list = all[r].filter((t) => t && String(t.text || "").trim());
 
-  const totalWeight = topics.reduce((sum, t) => sum + t.weight, 0);
-  const rand = Math.random() * totalWeight;
+  if (list.length === 0) return null;
 
-  let acc = 0;
-  for (const t of topics) {
-    acc += t.weight;
-    if (rand <= acc) return t;
+  // 重み付き抽選（weight が大きいほど出やすい）
+  let total = 0;
+  const weights = list.map((t) => {
+    const w = clampInt(t.weight ?? 1, 1, 100, 1);
+    total += w;
+    return w;
+  });
+
+  let rnd = Math.floor(Math.random() * total) + 1; // 1..total
+  for (let i = 0; i < list.length; i++) {
+    rnd -= weights[i];
+    if (rnd <= 0) return list[i];
   }
-  return topics[topics.length - 1];
+  return list[list.length - 1];
 }
 
 module.exports = {
+  drawTopic,
   getTopics,
   addTopic,
   updateTopic,
   deleteTopic,
-  drawTopic,
 };

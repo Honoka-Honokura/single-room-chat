@@ -10,10 +10,7 @@
       margin: 16px;
       background: #f3f4f6;
     }
-    h1 {
-      font-size: 20px;
-      margin-bottom: 8px;
-    }
+    h1 { font-size: 20px; margin-bottom: 8px; }
     .card {
       background: #ffffff;
       border-radius: 8px;
@@ -21,15 +18,8 @@
       box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
       margin-bottom: 16px;
     }
-    label {
-      font-size: 13px;
-      display: block;
-      margin-bottom: 4px;
-    }
-    input[type="password"],
-    input[type="text"],
-    input[type="number"],
-    textarea {
+    label { font-size: 13px; display: block; margin-bottom: 4px; }
+    input[type="password"], input[type="text"], input[type="number"], textarea, select {
       width: 100%;
       box-sizing: border-box;
       padding: 6px 8px;
@@ -44,91 +34,55 @@
       background: #e5e7eb;
       cursor: pointer;
     }
-    button.primary {
-      background: #2563eb;
-      border-color: #2563eb;
-      color: #ffffff;
-    }
-    button.danger {
-      background: #dc2626;
-      border-color: #b91c1c;
-      color: #ffffff;
-    }
-    button + button {
-      margin-left: 6px;
-    }
+    button.primary { background: #2563eb; border-color: #2563eb; color: #ffffff; }
+    button.danger  { background: #dc2626; border-color: #b91c1c; color: #ffffff; }
+    button + button { margin-left: 6px; }
     table {
       width: 100%;
       border-collapse: collapse;
       font-size: 13px;
       margin-top: 8px;
     }
-    th, td {
-      border: 1px solid #e5e7eb;
-      padding: 6px 8px;
-      vertical-align: top;
-    }
-    th {
-      background: #f9fafb;
-      white-space: nowrap;
-    }
-    td.text-cell {
-      width: 100%;
-      white-space: pre-wrap;   /* ★ 改行をそのまま表示 */
-      word-break: break-word;  /* ★ 長文折り返し */
-    }
-    .id-cell {
-      width: 40px;
-      text-align: right;
-    }
-    .weight-cell {
-      width: 60px;
-      text-align: right;
-    }
-    .actions-cell {
-      white-space: nowrap;
-      width: 120px;
-      text-align: center;
-    }
-    .status {
-      font-size: 12px;
-      color: #4b5563;
-      margin-top: 4px;
-      min-height: 16px;
-    }
-    .status.error {
-      color: #b91c1c;
-    }
+    th, td { border: 1px solid #e5e7eb; padding: 6px 8px; vertical-align: top; }
+    th { background: #f9fafb; white-space: nowrap; }
+    td.text-cell { width: 100%; white-space: pre-wrap; word-break: break-word; }
+    .id-cell { width: 40px; text-align: right; }
+    .weight-cell { width: 60px; text-align: right; }
+    .actions-cell { white-space: nowrap; width: 120px; text-align: center; }
+    .status { font-size: 12px; color: #4b5563; margin-top: 4px; min-height: 16px; }
+    .status.error { color: #b91c1c; }
 
-    /* ★ dialogの見た目 */
-    dialog::backdrop {
-      background: rgba(0,0,0,.25);
-    }
-    #editDialog {
-      border: none;
-      border-radius: 10px;
-      max-width: 560px;
-      width: 92vw;
-      padding: 0;
-    }
+    dialog::backdrop { background: rgba(0,0,0,.25); }
+    #editDialog { border: none; border-radius: 10px; max-width: 560px; width: 92vw; padding: 0; }
     .dialog-inner {
       padding: 14px 14px 10px;
       background: #fff;
       box-shadow: 0 10px 30px rgba(0,0,0,.12);
       border-radius: 10px;
     }
-    .dialog-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-top: 10px;
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+
+    .room-pill{
+      display:inline-block;
+      padding:2px 8px;
+      border-radius:999px;
+      background:#eef2ff;
+      color:#3730a3;
+      font-size:12px;
+      margin-left:6px;
+      border:1px solid #c7d2fe;
+      vertical-align: middle;
     }
   </style>
 </head>
 <body>
-  <h1>お題ガチャ 管理画面</h1>
+  <h1>お題ガチャ 管理画面 <span id="roomPill" class="room-pill">room: main</span></h1>
 
   <div class="card">
+    <h2 style="font-size:16px;margin:0 0 8px;">対象ルーム</h2>
+    <label for="roomSelect">ルーム（自動判定・手動変更可）</label>
+    <select id="roomSelect"></select>
+
     <label for="adminPassword">管理パスワード</label>
     <input type="password" id="adminPassword" placeholder="server.js の ADMIN_PASSWORD と同じ値" />
     <button id="loadBtn" class="primary">現在のお題を読み込む</button>
@@ -157,13 +111,10 @@
           <th class="actions-cell">操作</th>
         </tr>
       </thead>
-      <tbody id="topicsBody">
-        <!-- JSで埋める -->
-      </tbody>
+      <tbody id="topicsBody"></tbody>
     </table>
   </div>
 
-  <!-- ★ 編集モーダル（prompt廃止） -->
   <dialog id="editDialog">
     <div class="dialog-inner">
       <h3 style="margin:0 0 10px;font-size:16px;">お題の編集（改行OK）</h3>
@@ -192,7 +143,9 @@
     const newTopicText       = document.getElementById("newTopicText");
     const newTopicWeight     = document.getElementById("newTopicWeight");
 
-    // ★ モーダル
+    const roomSelect         = document.getElementById("roomSelect");
+    const roomPill           = document.getElementById("roomPill");
+
     const editDialog         = document.getElementById("editDialog");
     const editTopicText      = document.getElementById("editTopicText");
     const editTopicWeight    = document.getElementById("editTopicWeight");
@@ -201,10 +154,68 @@
     const editStatus         = document.getElementById("editStatus");
 
     let editingId = null;
-
-    // 最新の一覧を保持しておく（編集時に使う）
     let currentTopics = [];
 
+    // ---- room helpers ----
+    function normalizeRoomSlug(slug) {
+      const s = String(slug || "main").trim();
+      const safe = s.replace(/[^a-zA-Z0-9_-]/g, "");
+      return safe || "main";
+    }
+
+    function getRoomFromUrl() {
+      const params = new URLSearchParams(location.search);
+      const q = params.get("room");
+      if (q) return normalizeRoomSlug(q);
+
+      // /r/:slug/xxx を想定（/r/main でも /r/main/admin.html でも拾える）
+      const m = location.pathname.match(/^\/r\/([^\/]+)/);
+      if (m && m[1]) return normalizeRoomSlug(decodeURIComponent(m[1]));
+
+      return "main";
+    }
+
+    async function getAllowedRooms(password) {
+      // サーバ側に "許可ルーム一覧API" はないので、
+      // ここでは「手動入力しやすいように」候補をURLから1つ入れる＋自由入力的に拡張したい場合は別案。
+      // いまは「最低限」: 現在のroomを入れる + main を入れる。
+      const r = getRoomFromUrl();
+      const set = new Set(["main", r].filter(Boolean));
+      return Array.from(set);
+    }
+
+    async function initRoomSelect() {
+      const password = adminPasswordInput.value.trim();
+      const rooms = await getAllowedRooms(password);
+
+      roomSelect.innerHTML = "";
+      rooms.forEach(r => {
+        const opt = document.createElement("option");
+        opt.value = r;
+        opt.textContent = r;
+        roomSelect.appendChild(opt);
+      });
+
+      const initial = getRoomFromUrl();
+      roomSelect.value = rooms.includes(initial) ? initial : (rooms[0] || "main");
+      setRoomPill(roomSelect.value);
+    }
+
+    function getSelectedRoom() {
+      return normalizeRoomSlug(roomSelect.value || "main");
+    }
+
+    function setRoomPill(room) {
+      roomPill.textContent = `room: ${room}`;
+    }
+
+    roomSelect.addEventListener("change", () => {
+      setRoomPill(getSelectedRoom());
+      // ルーム切替したら一覧更新
+      loadTopics();
+    });
+
+    // ---- status ----
     function setStatus(message, isError = false) {
       statusText.textContent = message || "";
       statusText.classList.toggle("error", !!isError);
@@ -214,7 +225,7 @@
       editStatus.classList.toggle("error", !!isError);
     }
 
-    // 一覧を描画
+    // ---- render ----
     function renderTopics(list) {
       currentTopics = Array.isArray(list) ? list : [];
       topicsBody.innerHTML = "";
@@ -240,7 +251,7 @@
 
         const tdText = document.createElement("td");
         tdText.className = "text-cell";
-        tdText.textContent = topic.text; // CSS pre-wrapで改行表示
+        tdText.textContent = topic.text;
 
         const tdWeight = document.createElement("td");
         tdWeight.className = "weight-cell";
@@ -270,61 +281,52 @@
       });
     }
 
-    // 一覧読み込み
+    // ---- API ----
     async function loadTopics() {
       const password = adminPasswordInput.value.trim();
-      if (!password) {
-        setStatus("管理パスワードを入力してください。", true);
-        return;
-      }
+      if (!password) { setStatus("管理パスワードを入力してください。", true); return; }
+
+      const room = getSelectedRoom();
+
       try {
-        setStatus("読み込み中…");
-        const res = await fetch(`/api/topics?password=${encodeURIComponent(password)}`);
+        setStatus(`読み込み中…（room: ${room}）`);
+        const res = await fetch(`/api/topics?password=${encodeURIComponent(password)}&room=${encodeURIComponent(room)}`);
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error || "読み込みに失敗しました。");
         }
         const list = await res.json();
         renderTopics(list);
-        setStatus(`お題を ${list.length} 件読み込みました。`);
+        setStatus(`room:${room} のお題を ${list.length} 件読み込みました。`);
       } catch (err) {
         console.error(err);
         setStatus(err.message || "読み込み中にエラーが発生しました。", true);
       }
     }
 
-    // 追加
     async function addTopicFromForm() {
       const password = adminPasswordInput.value.trim();
-      if (!password) {
-        setStatus("管理パスワードを入力してください。", true);
-        return;
-      }
+      if (!password) { setStatus("管理パスワードを入力してください。", true); return; }
+
+      const room = getSelectedRoom();
+
       const text = newTopicText.value.trim();
       const weightVal = Number(newTopicWeight.value || "1");
-      if (!text) {
-        setStatus("お題テキストを入力してください。", true);
-        return;
-      }
+      if (!text) { setStatus("お題テキストを入力してください。", true); return; }
 
       try {
-        setStatus("追加中…");
+        setStatus(`追加中…（room: ${room}）`);
         const res = await fetch("/api/topics", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            password,
-            text,
-            weight: weightVal
-          })
+          body: JSON.stringify({ password, room, text, weight: weightVal })
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error || "追加に失敗しました。");
         }
         await res.json();
-        setStatus("お題を追加しました。");
-
+        setStatus(`room:${room} にお題を追加しました。`);
         newTopicText.value = "";
         newTopicWeight.value = "1";
         loadTopics();
@@ -334,19 +336,12 @@
       }
     }
 
-    // ★ 編集（prompt廃止→dialog）
     async function editTopic(id) {
       const password = adminPasswordInput.value.trim();
-      if (!password) {
-        setStatus("管理パスワードを入力してください。", true);
-        return;
-      }
+      if (!password) { setStatus("管理パスワードを入力してください。", true); return; }
 
       const target = currentTopics.find(t => t.id === id);
-      if (!target) {
-        setStatus("対象のお題が見つかりませんでした。", true);
-        return;
-      }
+      if (!target) { setStatus("対象のお題が見つかりませんでした。", true); return; }
 
       editingId = id;
       editTopicText.value = target.text || "";
@@ -356,39 +351,30 @@
       editTopicText.focus();
     }
 
-    editCancelBtn.addEventListener("click", () => {
-      editDialog.close();
-    });
+    editCancelBtn.addEventListener("click", () => editDialog.close());
 
     editSaveBtn.addEventListener("click", async () => {
       const password = adminPasswordInput.value.trim();
-      if (!password) {
-        setEditStatus("管理パスワードを入力してください。", true);
-        return;
-      }
+      if (!password) { setEditStatus("管理パスワードを入力してください。", true); return; }
+
+      const room = getSelectedRoom();
+
       const newText = editTopicText.value.trim();
       const newWeight = Number(editTopicWeight.value || "1");
 
       if (!editingId) return;
-      if (!newText) {
-        setEditStatus("お題テキストを入力してください。", true);
-        return;
-      }
+      if (!newText) { setEditStatus("お題テキストを入力してください。", true); return; }
       if (!Number.isFinite(newWeight) || newWeight <= 0) {
         setEditStatus("重みは1以上の数字で指定してください。", true);
         return;
       }
 
       try {
-        setEditStatus("更新中…");
+        setEditStatus(`更新中…（room: ${room}）`);
         const res = await fetch(`/api/topics/${editingId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            password,
-            text: newText,
-            weight: newWeight
-          })
+          body: JSON.stringify({ password, room, text: newText, weight: newWeight })
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -396,7 +382,7 @@
         }
         await res.json();
         editDialog.close();
-        setStatus("お題を更新しました。");
+        setStatus(`room:${room} のお題を更新しました。`);
         loadTopics();
       } catch (err) {
         console.error(err);
@@ -404,30 +390,29 @@
       }
     });
 
-    // 削除
     async function deleteTopic(id) {
       const password = adminPasswordInput.value.trim();
-      if (!password) {
-        setStatus("管理パスワードを入力してください。", true);
-        return;
-      }
+      if (!password) { setStatus("管理パスワードを入力してください。", true); return; }
+
+      const room = getSelectedRoom();
 
       const target = currentTopics.find(t => t.id === id);
-      const label = target ? `ID:${id}「${target.text.slice(0, 20)}…」` : `ID:${id}`;
-      const ok = window.confirm(`${label} を削除しますか？`);
+      const label = target ? `ID:${id}「${(target.text || "").slice(0, 20)}…」` : `ID:${id}`;
+      const ok = window.confirm(`${label} を削除しますか？\n(room: ${room})`);
       if (!ok) return;
 
       try {
-        setStatus("削除中…");
-        const res = await fetch(`/api/topics/${id}?password=${encodeURIComponent(password)}`, {
-          method: "DELETE"
-        });
+        setStatus(`削除中…（room: ${room}）`);
+        const res = await fetch(
+          `/api/topics/${id}?password=${encodeURIComponent(password)}&room=${encodeURIComponent(room)}`,
+          { method: "DELETE" }
+        );
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error || "削除に失敗しました。");
         }
         await res.json();
-        setStatus("お題を削除しました。");
+        setStatus(`room:${room} のお題を削除しました。`);
         loadTopics();
       } catch (err) {
         console.error(err);
@@ -435,20 +420,22 @@
       }
     }
 
-    // イベント割り当て
+    // ---- wiring ----
     loadBtn.addEventListener("click", loadTopics);
     addBtn.addEventListener("click", addTopicFromForm);
 
-    // ちょっと便利：Enterで読み込み
     adminPasswordInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        loadTopics();
-      }
+      if (e.key === "Enter") loadTopics();
     });
 
-    // グローバルに公開（デバッグ用）
+    // グローバル（デバッグ用）
     window.editTopic = editTopic;
     window.deleteTopic = deleteTopic;
+
+    // 初期化：room表示
+    (async () => {
+      await initRoomSelect();
+    })();
   </script>
 </body>
 </html>
