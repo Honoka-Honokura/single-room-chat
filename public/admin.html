@@ -566,8 +566,7 @@
       try {
         setStatus(`削除中…（room: ${room}）`);
         const res = await fetch(
-        `/api/topics/${id}?password=${encodeURIComponent(password)}&room=main`
-
+        `/api/topics/${id}?password=${encodeURIComponent(password)}&room=main`,
           { method: "DELETE" }
         );
         if (!res.ok) {
