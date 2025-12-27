@@ -657,21 +657,25 @@ app.get("/api/topics", (req, res) => {
   res.json(getTopics(room));
 });
 
-app.post("/api/topics", (req, res) => {
-  const { password, text, weight, room } = req.body || {};
+app.put("/api/topics/:id", (req, res) => {
+  const { password, text, weight, room, rooms } = req.body || {};
   if (password !== ADMIN_PASSWORD) return res.status(403).json({ error: "forbidden" });
 
   const r = normalizeRoomSlug(room || "main");
   if (!isRoomAllowed(r)) return res.status(404).json({ error: "room not found" });
 
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: "invalid id" });
+
   try {
-    const topic = addTopic(r, text, weight);
-    res.status(201).json(topic);
+    const topic = updateTopic(r, id, { text, weight, rooms }); // ★ rooms を渡す
+    res.json(topic);
   } catch (err) {
-    console.error("Failed to add topic:", err);
+    console.error("Failed to update topic:", err);
     res.status(400).json({ error: err.message || "bad request" });
   }
 });
+
 
 app.put("/api/topics/:id", (req, res) => {
   const { password, text, weight, room } = req.body || {};
